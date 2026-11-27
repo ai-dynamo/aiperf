@@ -51,8 +51,12 @@ class HashIdsPromptSynthesisMixin:
         return self.prompt_generator._bpe_stable_terminator_tokens
 
     def synthesize_prompts_from_hash_ids(
-        self, requests: list[HashIdsPromptRequest]
+        self,
+        requests: list[HashIdsPromptRequest],
+        *,
+        complete_hash_blocks: bool = False,
     ) -> dict[str, str]:
+        """Decode prompts, optionally truncating only after whole blocks are built."""
         pending: list[tuple[str, list[int]]] = []
         result: dict[str, str] = {}
 
@@ -62,9 +66,20 @@ class HashIdsPromptSynthesisMixin:
                     mean=req.input_length, stddev=0, hash_ids=[]
                 )
                 continue
-            tokens = self.prompt_generator._build_token_sequence(
-                req.input_length, req.hash_ids, self._block_size
+            length = (
+                len(req.hash_ids) * self._block_size
+                if complete_hash_blocks
+                else req.input_length
             )
+            if complete_hash_blocks and self._block_size == 1:
+                tokens = self.prompt_generator._build_token_sequence(
+                    length, req.hash_ids, self._block_size, separate_blocks=False
+                )
+            else:
+                tokens = self.prompt_generator._build_token_sequence(
+                    length, req.hash_ids, self._block_size
+                )
+            tokens = tokens[: req.input_length]
             pending.append((req.key, tokens))
 
         if pending:

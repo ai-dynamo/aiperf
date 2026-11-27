@@ -105,6 +105,42 @@ class TestBaseTransport:
         assert "http" in metadata.url_schemes
         assert "https" in metadata.url_schemes
 
+    def test_v2_source_session_is_not_replaced_on_worker(
+        self, transport, request_info, monkeypatch
+    ):
+        monkeypatch.setattr(
+            Environment.HTTP, "X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID", True
+        )
+        request_info.turns = [
+            Turn(
+                source_kind="agentic_mooncake_v2",
+                extra_headers={"x-dynamo-session-id": "source-session"},
+            )
+        ]
+        with pytest.raises(ValueError, match="X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID"):
+            transport.build_headers(request_info)
+
+    def test_v2_source_session_overrides_case_insensitive_headers(
+        self, transport, request_info
+    ):
+        request_info.endpoint_headers = {
+            "X-Dynamo-Session-ID": "wrong-session",
+            "X-Dynamo-Parent-Session-ID": "wrong-parent",
+        }
+        request_info.turns = [
+            Turn(
+                source_kind="agentic_mooncake_v2",
+                extra_headers={"x-dynamo-session-id": "source-session"},
+            )
+        ]
+        headers = transport.build_headers(request_info)
+        assert [
+            (key, value)
+            for key, value in headers.items()
+            if key.lower() == "x-dynamo-session-id"
+        ] == [("x-dynamo-session-id", "source-session")]
+        assert not any(key.lower() == "x-dynamo-parent-session-id" for key in headers)
+
     def test_get_transport_headers_default(self, transport, request_info):
         """Test default get_transport_headers returns empty dict."""
         headers = transport.get_transport_headers(request_info)

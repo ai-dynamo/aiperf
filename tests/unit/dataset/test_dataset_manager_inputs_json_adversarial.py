@@ -330,6 +330,25 @@ class TestPreformatPayloadsAdversarial:
 
 
 class TestSkipInputsJsonAdversarial:
+    @pytest.mark.parametrize("explicit", [False, True])
+    @pytest.mark.asyncio
+    async def test_agentic_v2_does_not_export_inputs_json(
+        self, tmp_path: Path, explicit: bool
+    ) -> None:
+        mgr = _full_manager(
+            tmp_path, CustomDatasetType.AGENTIC_MOONCAKE_V2 if explicit else None
+        )
+        mgr._configure_dataset = AsyncMock()
+        mgr._configure_tokenizer = AsyncMock()
+        mgr._configure_dataset_client_and_free_memory = AsyncMock()
+        mgr._detected_dataset_type = CustomDatasetType.AGENTIC_MOONCAKE_V2
+        mgr._try_cache_lookup = Mock(return_value=None)
+        with patch.object(
+            mgr, "_generate_inputs_json_file", new_callable=AsyncMock
+        ) as generate:
+            await mgr._profile_configure_command(Mock())
+            generate.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_skip_inputs_json_generation_for_baseten_trace(
         self, tmp_path: Path

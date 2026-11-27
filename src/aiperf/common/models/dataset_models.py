@@ -3,7 +3,7 @@
 
 from functools import cached_property
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -166,6 +166,10 @@ class ReplayTurnReference(AIPerfBaseModel):
         ge=0,
         le=2**63 - 1,
         description="Delay after the predecessor event in nanoseconds.",
+    )
+    relation: Literal["sequence", "spawn", "join", "replay_barrier"] | None = Field(
+        default=None,
+        description="Source relationship between requests, when recorded.",
     )
 
 

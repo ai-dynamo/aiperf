@@ -113,6 +113,7 @@ def _make_strategy(
     cfg.warmup_requests_per_lane = cache_warmup_requests_per_lane
     issuer = issuer if issuer is not None else AsyncMock()
     issuer.replay_gate = MagicMock()
+    issuer.release_url_affinity = MagicMock()
     issuer.replay_gate.completed_prefixes.return_value = ()
     issuer.replay_gate.pending_turns.return_value = ()
     issuer.replay_gate.pending_turns_by_root.return_value = {}
@@ -3808,6 +3809,7 @@ async def test_on_tree_drained_finite_dispatch_failure_propagates_to_replay_gate
 
     strategy._on_tree_drained("tree_corr", CreditPhase.PROFILING)
 
+    issuer.release_url_affinity.assert_called_once_with("tree_corr")
     assert len(executed_tasks) == 1
     await executed_tasks[0]
 
