@@ -358,8 +358,10 @@ async def try_claim_completion(
     """Try to claim the completion branch durably via a CR annotation.
 
     Uses a JSON-patch with a ``test`` op so two concurrent handlers cannot
-    both acquire the claim: only the first patch succeeds, the second
-    gets a 422/409 and returns False. When the body snapshot already shows
+    both acquire the claim: only the first patch succeeds. The loser's 409 is
+    cached as a lost race only when a live re-read shows the claim; a 422 (or
+    a 409 without a live claim) returns False uncached so a later tick
+    retries. When the body snapshot already shows
     the claim annotation, the live CR is re-read (the snapshot is
     user-writable and not trusted) and a genuine live claim is treated as a
     lost race — without re-submitting an overwriting claim patch.
