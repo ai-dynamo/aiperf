@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Release-ops gate
+description: >
+  Fails unless both github.actor and github.triggering_actor are active members
+  of the ai-dynamo/devops team. Team membership needs an org-scoped token, so it
+  is read with the release GitHub App (installed on this repo, Members: read).
+  The calling job must be in the environment that holds the app secrets.
+
+inputs:
+  app-id:
+    description: 'Release GitHub App id'
+    required: true
+  private-key:
+    description: 'Release GitHub App private key'
+    required: true
+  team:
+    description: 'Team slug within the repository owner org'
+    default: devops
+    required: false
+
+runs:
+  using: composite
+  steps:
+    - name: Mint app token (ops gate)
+      id: ops-token
+      uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.private-key }}
+        permission-members: read
+
+    - name: Require release-ops team membership
+      shell: bash
+      env:
+        GH_TOKEN:         ${{ steps.ops-token.outputs.token }}
+        ORG:              ${{ github.repository_owner }}
+        TEAM:             ${{ inputs.team }}
+        ACTOR:            ${{ github.actor }}
+        TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+      run: |
+        set -euo pipefail
+        for USER in $(printf '%s\n%s\n' "${ACTOR}" "${TRIGGERING_ACTOR}" | sort -u); do
+          HTTP=$(curl -sS -o "${RUNNER_TEMP}/membership.json" -w '%{http_code}' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/orgs/${ORG}/teams/${TEAM}/memberships/${USER}")
+          if [ "${HTTP}" != "200" ] || ! grep -Eq '"state"[[:space:]]*:[[:space:]]*"active"' "${RUNNER_TEMP}/membership.json"; then
+            echo "::error::@${USER} is not an active member of ${ORG}/${TEAM} (HTTP ${HTTP}); only release ops may stage a release."
+            exit 1
+          fi
+          echo "@${USER} authorized via ${ORG}/${TEAM}"
+        done
