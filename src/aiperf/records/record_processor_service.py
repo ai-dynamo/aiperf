@@ -503,6 +503,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             x_correlation_id=record.request_info.x_correlation_id,
             session_num=record.request_info.credit_num,
             worker_id=worker_id,
+            target_url_index=record.request_info.target_url_index,
             was_cancelled=cancellation_time_ns is not None,
             cancellation_time_ns=cancellation_time_ns,
             agent_depth=record.request_info.agent_depth,
@@ -693,6 +694,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 profiling_index = record.request_info.profiling_index
                 phase_name = record.request_info.phase_name
                 phase_kind = record.request_info.phase_kind
+                target_url_index = record.request_info.target_url_index
             else:
                 session_num = -1
                 benchmark_phase = CreditPhase.PROFILING
@@ -700,11 +702,13 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 profiling_index = None
                 phase_name = None
                 phase_kind = None
+                target_url_index = None
             metadata = MetricRecordMetadata(
                 session_num=session_num,
                 request_start_ns=record.controller_timestamp_ns,
                 request_end_ns=record.controller_timestamp_ns,
                 worker_id=message.service_id,
+                target_url_index=target_url_index,
                 record_processor_id=self.service_id,
                 benchmark_phase=benchmark_phase,
                 phase_index=phase_index,

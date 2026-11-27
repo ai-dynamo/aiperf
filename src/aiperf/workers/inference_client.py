@@ -152,6 +152,11 @@ class InferenceClient(AIPerfLifecycleMixin):
         Returns:
             RequestRecord containing the response data and metadata.
         """
+        request_info.target_url_index = (
+            request_info.model_endpoint.endpoint.resolve_url_index(
+                request_info.url_index
+            )
+        )
         request_info.endpoint_headers = self.endpoint.get_endpoint_headers(request_info)
         request_info.endpoint_params = self.endpoint.get_endpoint_params(request_info)
         if request_info.payload_bytes is not None:
