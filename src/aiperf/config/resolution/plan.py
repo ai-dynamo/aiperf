@@ -227,6 +227,16 @@ class BenchmarkPlan(BaseModel):
         ),
     ]
 
+    @field_validator("configs")
+    @classmethod
+    def _validate_partition_warmup(
+        cls, configs: list[BenchmarkConfig]
+    ) -> list[BenchmarkConfig]:
+        """Cover expanded and programmatic workloads before trial warmup is stripped."""
+        for config in configs:
+            config.require_partition_warmup()
+        return configs
+
     @property
     def use_adaptive(self) -> bool:
         """True if convergence-based adaptive trial stopping is configured."""
