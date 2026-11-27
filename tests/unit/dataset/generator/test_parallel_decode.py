@@ -6,7 +6,7 @@
 import importlib
 import os
 from contextlib import contextmanager
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -14,6 +14,16 @@ from aiperf.dataset.generator.parallel_decode import parallel_decode
 
 # Import the module directly (not through __init__.py which exports the function)
 pd_module = importlib.import_module("aiperf.dataset.generator.parallel_decode")
+
+
+@pytest.fixture(autouse=True)
+def _stub_loader_mp_context(monkeypatch):
+    """Keep the process-global loader mp context out of these tests.
+
+    The real get_loader_mp_context caches _loader_ctx and sets AIPERF_LOADER_PRELOAD_*
+    env vars, which would make later tests in the same worker see a conflicting tokenizer.
+    """
+    monkeypatch.setattr(pd_module, "get_loader_mp_context", MagicMock())
 
 
 class TestParallelDecode:
@@ -177,7 +187,10 @@ class TestWorkerFunctions:
             pd_module._decode_tokens([1, 2, 3])
 
     @patch("aiperf.common.tokenizer.Tokenizer")
-    def test_init_worker_loads_tokenizer(self, mock_tokenizer_class):
+    @patch("aiperf.dataset._tokenizer_preload.get_preloaded", return_value=None)
+    def test_init_worker_loads_tokenizer(
+        self, _mock_get_preloaded, mock_tokenizer_class
+    ):
         """Test that _init_worker loads the tokenizer."""
         pd_module._worker_tokenizer = None
         pd_module._worker_tokenizer_key = None
@@ -321,3 +334,99 @@ class TestParallelDecodeTokenizerArgs:
 
         call_kwargs = mock_executor_class.call_args.kwargs
         assert call_kwargs["initargs"] == ("kimi-vl", True, "v1.2")
+
+
+class TestParallelDecodeMpContext:
+    """parallel_decode must create its pool from the loader mp context, never the
+    default fork context, because forking after HF tokenizer use deadlocks workers."""
+
+    @staticmethod
+    def _executor_mock(mock_executor_class):
+        mock_executor = MagicMock()
+        mock_executor.__enter__ = MagicMock(return_value=mock_executor)
+        mock_executor.__exit__ = MagicMock(return_value=False)
+        mock_executor.map.return_value = ["decoded"] * 15
+        mock_executor_class.return_value = mock_executor
+        return mock_executor
+
+    @patch.object(pd_module, "ProcessPoolExecutor")
+    @patch.object(pd_module, "get_loader_mp_context")
+    def test_parallel_decode_large_batch_passes_preloaded_mp_context(
+        self, mock_get_ctx, mock_executor_class
+    ):
+        sentinel_ctx = MagicMock(name="loader_ctx")
+        mock_get_ctx.return_value = sentinel_ctx
+        self._executor_mock(mock_executor_class)
+
+        parallel_decode(
+            [[i] for i in range(15)],
+            "kimi-vl",
+            trust_remote_code=True,
+            revision="v1.2",
+        )
+
+        mock_get_ctx.assert_called_once_with(
+            preload_tokenizer="kimi-vl",
+            trust_remote_code=True,
+            revision="v1.2",
+        )
+        assert mock_executor_class.call_args.kwargs["mp_context"] is sentinel_ctx
+
+    @patch.object(pd_module, "ProcessPoolExecutor")
+    @patch.object(pd_module, "get_loader_mp_context")
+    def test_parallel_decode_preload_conflict_falls_back_to_no_preload(
+        self, mock_get_ctx, mock_executor_class
+    ):
+        fallback_ctx = MagicMock(name="fallback_ctx")
+        mock_get_ctx.side_effect = [ValueError("already preloaded"), fallback_ctx]
+        mock_executor = self._executor_mock(mock_executor_class)
+
+        result = parallel_decode([[i] for i in range(15)], "llama")
+
+        assert mock_get_ctx.call_args_list == [
+            call(preload_tokenizer="llama", trust_remote_code=False, revision="main"),
+            call(),
+        ]
+        assert mock_executor_class.call_args.kwargs["mp_context"] is fallback_ctx
+        mock_executor.map.assert_called_once()
+        assert result == ["decoded"] * 15
+
+    @patch.object(pd_module, "ProcessPoolExecutor")
+    @patch.object(pd_module, "get_loader_mp_context")
+    def test_parallel_decode_small_batch_does_not_create_mp_context(
+        self, mock_get_ctx, mock_executor_class
+    ):
+        with patch("aiperf.common.tokenizer.Tokenizer") as mock_tokenizer_class:
+            mock_tokenizer_class.from_pretrained.return_value = MagicMock()
+            parallel_decode([[1, 2]], "gpt2")
+
+        mock_get_ctx.assert_not_called()
+        mock_executor_class.assert_not_called()
+
+
+class TestInitWorkerPreloadedTokenizer:
+    """_init_worker reuses the forkserver-preloaded tokenizer before loading from disk."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_worker_state(self, monkeypatch):
+        monkeypatch.setattr(pd_module, "_worker_tokenizer", None)
+        monkeypatch.setattr(pd_module, "_worker_tokenizer_key", None)
+        monkeypatch.setenv("HF_HUB_OFFLINE", "0")
+        monkeypatch.setenv("TRANSFORMERS_OFFLINE", "0")
+
+    @patch("aiperf.common.tokenizer.Tokenizer")
+    @patch("aiperf.dataset._tokenizer_preload.get_preloaded")
+    def test_init_worker_uses_preloaded_tokenizer_without_loading(
+        self, mock_get_preloaded, mock_tokenizer_class
+    ):
+        preloaded = MagicMock(name="preloaded")
+        mock_get_preloaded.return_value = preloaded
+
+        pd_module._init_worker("kimi-vl", trust_remote_code=True, revision="v1.2")
+
+        mock_get_preloaded.assert_called_once_with(
+            "kimi-vl", trust_remote_code=True, revision="v1.2"
+        )
+        mock_tokenizer_class.from_pretrained.assert_not_called()
+        assert pd_module._worker_tokenizer is preloaded
+        assert pd_module._worker_tokenizer_key == ("kimi-vl", True, "v1.2")
