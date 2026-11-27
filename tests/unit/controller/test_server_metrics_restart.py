@@ -15,6 +15,7 @@ from aiperf.common.enums import (
 from aiperf.common.messages import (
     BaseServiceErrorMessage,
     ProcessServerMetricsResultMessage,
+    ServerMetricsStatusMessage,
 )
 from aiperf.common.models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.server_metrics_models import (
@@ -36,6 +37,39 @@ def registration(instance_id: str) -> Registration:
         instance_id=instance_id,
         capabilities=(make_result_producer_capability("server_metrics"),),
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("registered_before_disabled", [False, True])
+async def test_disabled_metrics_cannot_rejoin_on_late_registration(
+    system_controller: SystemController, registered_before_disabled: bool
+) -> None:
+    controller = system_controller
+    controller._check_and_trigger_shutdown = AsyncMock()
+    controller._result_join_coordinator.register("records", "records-manager")
+    if registered_before_disabled:
+        controller._on_registration(registration("first-process"))
+
+    await controller._on_server_metrics_status_message(
+        ServerMetricsStatusMessage(
+            service_id="server_metrics_manager",
+            enabled=False,
+            endpoints_configured=["http://localhost:8000/metrics"],
+            endpoints_reachable=[],
+            reason="no Prometheus endpoints reachable",
+        )
+    )
+    controller._on_registration(registration("first-process"))
+    assert controller._result_join_coordinator.pending_domains == ("records",)
+
+    controller._system_state = SystemState.PROFILING
+    first_seen_ns = ServiceRegistry.get_service("server_metrics_manager").first_seen_ns
+    await controller._on_service_reaped(
+        "server_metrics_manager", "process exited", first_seen_ns
+    )
+    assert controller._result_join_coordinator.pending_domains == ("records",)
+    assert not controller._exit_errors
+    assert controller._system_state == SystemState.PROFILING
 
 
 @pytest.mark.asyncio
