@@ -137,6 +137,7 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
             grader_name=self._grader_name,
             passed=result.correct,
             unparsed=result.unparsed,
+            grader_error=result.grader_error,
             confidence=result.confidence,
             expected=result.ground_truth,
             actual=result.extracted_answer,
@@ -168,7 +169,8 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
             preview = response_text.strip().replace("\n", "\\n")[:200]
             return (
                 f"[accuracy] session={session_num} correct={result.correct} "
-                f"unparsed={result.unparsed} reason={result.reasoning!r} "
+                f"unparsed={result.unparsed} grader_error={result.grader_error} "
+                f"reason={result.reasoning!r} "
                 f"extracted={result.extracted_answer[:120]!r} "
                 f"response_len={len(response_text)} response_preview={preview!r}"
             )

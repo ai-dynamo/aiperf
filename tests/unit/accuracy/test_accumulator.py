@@ -32,6 +32,7 @@ def _record(
     task: str | None = "math",
     passed: bool = True,
     unparsed: bool = False,
+    grader_error: bool = False,
     session_num: int = 0,
     grader_name: str = "exact_match",
 ) -> AccuracyRecordsData:
@@ -44,6 +45,7 @@ def _record(
         grader_name=grader_name,
         passed=passed,
         unparsed=unparsed,
+        grader_error=grader_error,
         confidence=1.0,
         expected="A",
         actual="A",
@@ -205,3 +207,47 @@ class TestAccuracyAccumulator:
 
         sliced = acc.query_time_range(20, 40)
         assert sorted(r.timestamp_ns for r in sliced) == [20, 30]
+
+
+@pytest.mark.asyncio
+class TestAccuracyAccumulatorGraderErrors:
+    async def test_summarize_counts_grader_errors_separately_from_unparsed(
+        self,
+    ) -> None:
+        acc = _make_accumulator()
+        await _seed(
+            acc,
+            [
+                _record(timestamp_ns=10, task="math", passed=True),
+                _record(timestamp_ns=20, task="math", passed=False, grader_error=True),
+                _record(timestamp_ns=30, task="algebra", passed=False, unparsed=True),
+                _record(
+                    timestamp_ns=40, task="algebra", passed=False, grader_error=True
+                ),
+            ],
+        )
+
+        summary = await acc.summarize()
+
+        assert summary is not None
+        assert summary.total_evaluated == 4
+        assert summary.total_passed == 1
+        # Legacy formula: grader errors stay in the denominator.
+        assert summary.accuracy_rate == 0.25
+        assert summary.overall_unparsed == 1
+        assert summary.overall_grader_errors == 2
+        assert summary.per_task["math"].grader_errors == 1
+        assert summary.per_task["math"].grader_error_rate == 0.5
+        assert summary.per_task["algebra"].unparsed == 1
+        assert summary.per_task["algebra"].grader_errors == 1
+
+    async def test_summarize_without_grader_errors_reports_zero(self) -> None:
+        acc = _make_accumulator()
+        await _seed(acc, [_record(timestamp_ns=10, task="math", passed=True)])
+
+        summary = await acc.summarize()
+
+        assert summary is not None
+        assert summary.overall_grader_errors == 0
+        assert summary.per_task["math"].grader_errors == 0
+        assert summary.per_task["math"].grader_error_rate == 0.0

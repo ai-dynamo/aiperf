@@ -6,6 +6,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from aiperf.accuracy.models import (
+    ACCURACY_GRADER_ERROR_TAG,
+    ACCURACY_GRADER_ERROR_TASK_TAG_PREFIX,
     ACCURACY_METRIC_PREFIX,
     ACCURACY_OVERALL_TAG,
     ACCURACY_TASK_TAG_PREFIX,
@@ -69,44 +71,69 @@ class AccuracyConsoleExporter(AIPerfLoggerMixin):
             for m in accuracy_metrics
             if m.tag.startswith(ACCURACY_UNPARSED_TASK_TAG_PREFIX)
         }
+        # Only emitted when a grade failed, so the column appears only then and
+        # runs without grader failures render the legacy table unchanged.
+        grader_errors_overall = next(
+            (m for m in accuracy_metrics if m.tag == ACCURACY_GRADER_ERROR_TAG), None
+        )
+        grader_errors_by_task: dict[str, int] = {
+            m.tag.removeprefix(ACCURACY_GRADER_ERROR_TASK_TAG_PREFIX): int(m.sum or 0)
+            for m in accuracy_metrics
+            if m.tag.startswith(ACCURACY_GRADER_ERROR_TASK_TAG_PREFIX)
+        }
+        show_grader_errors = grader_errors_overall is not None
 
         table = Table(title="Accuracy Benchmark Results", show_lines=True)
         table.add_column("Task", style="cyan", min_width=30)
         table.add_column("Correct", justify="right")
         table.add_column("Total", justify="right")
         table.add_column("Unparsed", justify="right", style="yellow")
+        if show_grader_errors:
+            table.add_column("Grader errors", justify="right", style="red")
         table.add_column("Accuracy", justify="right", style="bold")
 
         for m in task_metrics:
             task_name = m.tag.removeprefix(ACCURACY_TASK_TAG_PREFIX)
             acc_str = f"{m.current:.2%}" if m.current is not None else "N/A"
-            unparsed_count = str(unparsed_by_task.get(task_name, 0))
-            table.add_row(
+            cells = [
                 task_name,
                 str(m.sum or 0),
                 str(m.count or 0),
-                unparsed_count,
-                acc_str,
-            )
+                str(unparsed_by_task.get(task_name, 0)),
+            ]
+            if show_grader_errors:
+                cells.append(str(grader_errors_by_task.get(task_name, 0)))
+            table.add_row(*cells, acc_str)
 
         if overall:
             acc_str = f"{overall.current:.2%}" if overall.current is not None else "N/A"
             overall_unparsed = str(
                 int(unparsed_overall.sum or 0) if unparsed_overall else 0
             )
-            table.add_row(
+            cells = [
                 "[bold]OVERALL[/bold]",
                 str(overall.sum or 0),
                 str(overall.count or 0),
                 overall_unparsed,
-                f"[bold green]{acc_str}[/bold green]",
-                style="on dark_green",
+            ]
+            if grader_errors_overall is not None:
+                cells.append(str(int(grader_errors_overall.sum or 0)))
+            table.add_row(
+                *cells, f"[bold green]{acc_str}[/bold green]", style="on dark_green"
             )
 
         console.print()
         console.print(table)
 
         self._maybe_warn_all_unparsed(console, overall, unparsed_overall)
+        if grader_errors_overall is not None and grader_errors_overall.sum:
+            console.print(
+                f"[bold yellow]Warning:[/bold yellow] the grader failed to score "
+                f"{int(grader_errors_overall.sum)} of {int(grader_errors_overall.count or 0)} "
+                "responses; they are counted as incorrect. Accuracy over scored "
+                "responses is passed / (total - grader_errors). Rerun with "
+                "--accuracy-verbose to see each failure reason."
+            )
 
     def _maybe_warn_all_unparsed(
         self,
