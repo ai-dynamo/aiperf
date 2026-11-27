@@ -391,6 +391,27 @@ jobs:
       - name: Validate dependency resolution against required-environments
         run: uv sync --active --no-install-project
 
+  # Reports `[tool.uv] override-dependencies` entries that upstream has caught
+  # up with (every locked dependent's latest PyPI release admits the overridden
+  # version). No build or staging job `needs:` this one, so a failure alerts
+  # via notify-slack without blocking the container build. Exit 1 = override
+  # removable, exit 2 = PyPI unreachable (status unknown).
+  override-check:
+    name: Stale uv Override Check
+    needs: [prepare-nightly]
+    runs-on: prod-aiperf-default-v1
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-nightly.outputs.resolved_sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Check uv overrides against latest upstream releases
+        run: uv run --no-project --with packaging python tools/check_uv_overrides.py
+
   # ============================================================================
   # PHASE 3: BUILD
   # No environment: declaration — builder runners carry AWS credentials via IAM
@@ -1151,6 +1172,7 @@ jobs:
       - unit-tests
       - integration-tests
       - test-docs-end-to-end
+      - override-check
       - build-container
       - create-multiarch-manifest-ecr
       - stage-nightly-container
@@ -1186,6 +1208,7 @@ jobs:
             echo "| unit-tests | ${{ needs.unit-tests.result }} |"
             echo "| integration-tests | ${{ needs.integration-tests.result }} |"
             echo "| test-docs-end-to-end | ${{ needs.test-docs-end-to-end.result }} |"
+            echo "| override-check | ${{ needs.override-check.result }} |"
             echo ""
             echo "### Build + Upload"
             echo "| Job | Result |"
@@ -1215,6 +1238,7 @@ jobs:
       - integration-tests
       - test-docs-end-to-end
       - resolve-check
+      - override-check
       - build-container
       - create-multiarch-manifest-ecr
       - stage-nightly-container
