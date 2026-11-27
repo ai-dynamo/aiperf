@@ -311,6 +311,8 @@ class SageMakerDataCaptureLoader(
         # Apply offset/ISL/OSL filters on zero-aligned timestamps
         items = [t for t in raw_items if self._filter_and_cap_trace(t)]
         items.sort(key=lambda t: t.timestamp)
+        if not items and self._skipped_traces:
+            raise ValueError(self._everything_filtered_message())
 
         self.info(f"Loaded {len(items):,} traces from {source_desc}")
 

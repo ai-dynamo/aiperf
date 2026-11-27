@@ -895,6 +895,40 @@ class TestBasetenTraceDatasetLoader:
         assert sorted(trace.text_input for trace in traces) == ["minute0", "minute1"]
         assert sorted(trace.timestamp for trace in traces) == [0, 6_000]
 
+    def test_offset_window_excluding_everything_is_an_error(self, tmp_path: Path):
+        # load_dataset overrides the base template, so it must keep the base
+        # "every trace was filtered out" check instead of returning {}.
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": 1_000_000 + offset_ms,
+                    "prompt": f"row{offset_ms}",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "poor_man_session_id": offset_ms,
+                }
+                for offset_ms in (0, 1_000, 2_000)
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(
+                path,
+                fixed_schedule=True,
+                fixed_schedule_start_offset=10_000,
+                fixed_schedule_end_offset=20_000,
+            ),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        with pytest.raises(ValueError, match="No trace entries remain") as exc_info:
+            loader.load_dataset()
+
+        message = str(exc_info.value)
+        assert "3 outside the fixed-schedule offset window" in message
+        assert "10000" in message and "20000" in message
+
     def _write_hinted_single_row(self, tmp_path: Path) -> Path:
         return _write_parquet(
             tmp_path / "trace.parquet",
