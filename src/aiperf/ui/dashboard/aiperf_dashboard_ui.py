@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.hooks import (
     AIPerfHook,
     on_start,
@@ -49,7 +50,17 @@ class AIPerfDashboardUI(BaseAIPerfUI):
         )
         self.controller = controller
         self.run = run
-        self.app: AIPerfTextualApp = AIPerfTextualApp(run=run, controller=controller)
+        # Deferred: Textual's LinuxDriver imports termios, which Windows lacks.
+        driver_class = None
+        if not IS_WINDOWS:
+            from aiperf.ui.dashboard.lenient_linux_driver import LenientLinuxDriver
+
+            driver_class = LenientLinuxDriver
+        self.app: AIPerfTextualApp = AIPerfTextualApp(
+            run=run,
+            controller=controller,
+            driver_class=driver_class,
+        )
         # Setup the log consumer to consume log records from the shared log queue
         self.log_consumer: LogConsumer = LogConsumer(log_queue=log_queue, app=self.app)
         self.attach_child_lifecycle(self.log_consumer)  # type: ignore
