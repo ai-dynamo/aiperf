@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
 # @template
-# title: GPU Telemetry (DCGM / pynvml)
-# description: Collect GPU power, utilization, memory, and temperature during a benchmark via DCGM or pynvml.
+# title: GPU Telemetry (DCGM / pynvml / npu_smi)
+# description: Collect GPU power, utilization, memory, and temperature during a benchmark via DCGM, pynvml, or npu-smi.
 # category: Advanced
 # tags: gpu, telemetry, dcgm, pynvml, power, utilization
 # difficulty: intermediate
@@ -15,9 +15,12 @@
 # XID errors) alongside inference latency. Exports a separate
 # `gpu_telemetry_export.json` next to the standard profile export.
 #
-# Two collector backends:
-#   - dcgm   : scrapes DCGM exporter Prometheus endpoints (works across nodes)
-#   - pynvml : reads the local NVIDIA driver directly (no DCGM container)
+# Local collector backends (no exporter needed):
+#   - dcgm    : scrapes DCGM exporter Prometheus endpoints (works across nodes)
+#   - pynvml  : reads the local NVIDIA driver directly (no DCGM container)
+#   - amdsmi  : reads local AMD ROCm GPUs via the ROCm amdsmi bindings
+#   - npu_smi : reads local Huawei Ascend NPUs via the driver's npu-smi CLI
+#   - npu_exporter : scrapes an Ascend npu-exporter Prometheus endpoint (one URL per node)
 #
 # Display modes:
 #   - summary           : aggregate table after the run (default)
@@ -59,7 +62,7 @@ benchmark:
 
   gpuTelemetry:
     enabled: true
-    collector: dcgm           # Switch to "pynvml" for local-only collection without DCGM
+    collector: dcgm           # Local-only: "pynvml" (NVIDIA), "amdsmi" (AMD), "npu_smi" (Ascend)
     mode: summary             # Switch to "realtime_dashboard" to get a live GPU panel in the TUI
     urls:
       - http://localhost:9400/metrics   # Standard DCGM exporter port

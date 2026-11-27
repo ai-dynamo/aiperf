@@ -1278,6 +1278,13 @@ console_exporter:
       Console exporter for AMD cross-GPU power efficiency totals (power, energy,
       tokens/joule, energy/user). Renders a vendor-attributed section separate
       from the main metrics table. Shown when AMD GPU telemetry is available.
+  power_efficiency_ascend:
+    class: aiperf.exporters.console_power_efficiency_exporter:ConsoleAscendPowerEfficiencyExporter
+    description: |
+      Console exporter for Ascend cross-NPU power efficiency totals (power,
+      energy, tokens/joule, energy/user). Renders a vendor-attributed section
+      separate from the main metrics table. Shown when Ascend NPU telemetry is
+      available.
 
   server_speculative_decoding:
     class: aiperf.exporters.sglang.speculative_decoding_console_exporter:SGLangSpeculativeDecodingConsoleExporter
@@ -1466,6 +1473,21 @@ gpu_telemetry_collector:
     description: |
       AMDSMI telemetry collector for AMD ROCm GPUs (Instinct MI300X, MI355X, etc.).
       Uses the amdsmi Python library shipped with ROCm.
+    metadata:
+      is_local: true
+  npu_exporter:
+    class: aiperf.gpu_telemetry.npu_exporter_collector:NpuExporterTelemetryCollector
+    description: |
+      npu-exporter telemetry collector for Huawei Ascend NPUs. Scrapes the Ascend
+      npu-exporter DaemonSet's Prometheus endpoint (npu_chip_info_* families), so it
+      needs no npu-smi binary, driver mount, or NPU allocation inside AIPerf. Each
+      node runs its own exporter, so supply one URL per node.
+  npu_smi:
+    class: aiperf.gpu_telemetry.npu_smi_collector:NPUSMITelemetryCollector
+    description: |
+      npu-smi telemetry collector for Huawei Ascend NPUs (910B/910C training cards,
+      310P/300I inference cards, etc.). Shells out to the npu-smi CLI shipped with
+      the CANN driver; no exporter, toolkit, or Python binding required.
     metadata:
       is_local: true
 

@@ -8,6 +8,7 @@ from numpy.typing import NDArray
 from pydantic import AliasChoices, ConfigDict, Field
 
 from aiperf.common.exceptions import NoMetricValue
+from aiperf.common.finite import FiniteFloat
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.record_models import MetricResult
@@ -138,6 +139,36 @@ class TelemetryMetrics(AIPerfBaseModel):
         "indicator is active, 0.0 otherwise)",
     )
 
+    # Ascend NPU telemetry (collected by NPUSMITelemetryCollector from the CANN
+    # driver's `npu-smi info -t ...` output). Namespaced `ascend_*` rather than
+    # aliased onto NVML-shaped fields because the sensors measure different
+    # quantities. No energy field: npu-smi exposes no cumulative energy counter.
+    ascend_power: FiniteFloat | None = Field(
+        default=None, description="Ascend NPU power draw in W"
+    )
+    ascend_temperature: FiniteFloat | None = Field(
+        default=None, description="Ascend NPU chip temperature in °C"
+    )
+    ascend_aicore_utilization: FiniteFloat | None = Field(
+        default=None,
+        description="Ascend AI Core utilization percentage (0-100), reported "
+        "by npu-smi as 'Aicore Usage Rate'",
+    )
+    ascend_memory_utilization: FiniteFloat | None = Field(
+        default=None,
+        description="Ascend HBM occupancy percentage (0-100), reported by "
+        "npu-smi as 'HBM Usage Rate'",
+    )
+    ascend_memory_used: FiniteFloat | None = Field(
+        default=None,
+        description="Ascend HBM used in GB, derived from HBM capacity × usage rate",
+    )
+    ascend_health: FiniteFloat | None = Field(
+        default=None,
+        description="Ascend NPU health snapshot (1.0 when npu-smi reports OK, "
+        "0.0 for any warning/alarm state)",
+    )
+
 
 class GpuMetadata(AIPerfBaseModel):
     """Static metadata for a GPU that doesn't change over time.
@@ -172,7 +203,8 @@ class GpuMetadata(AIPerfBaseModel):
     )
     platform: str = Field(
         default=UNKNOWN_GPU_TELEMETRY_PLATFORM,
-        description="GPU telemetry platform namespace, e.g. 'nvidia', 'amd', or 'unknown'",
+        description="GPU telemetry platform namespace, e.g. 'nvidia', 'amd', "
+        "'ascend', or 'unknown'",
     )
 
 

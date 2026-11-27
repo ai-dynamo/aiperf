@@ -79,7 +79,7 @@ class GPUTelemetryAccumulatorProtocol(Protocol):
         ...
 
     def available_platforms(self) -> set[str]:
-        """Return the set of GPU platforms (e.g. ``"nvidia"``, ``"amd"``) with data."""
+        """Return the set of GPU platforms (e.g. ``"nvidia"``, ``"amd"``, ``"ascend"``) with data."""
         ...
 
     def total_power_watts(

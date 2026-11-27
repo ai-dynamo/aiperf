@@ -358,3 +358,160 @@ class AmdEnergyPerUserMetric(_InjectedEnergyMetric):
     display_order = 865
     flags = MetricFlags.NONE
     console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_AMD
+
+
+# --- Ascend -----------------------------------------------------------------
+
+
+class AscendEnergyDelayProductMetric(_InjectedEnergyMetric):
+    """Ascend energy-delay product: ``energy_per_request_J * mean_request_latency_s`` (J*s)."""
+
+    __is_abstract__ = False
+    tag = "ascend_energy_delay_product"
+    header = "Energy Delay Product"
+    unit = GenericMetricUnit.JOULE_SECONDS
+    display_order = 900
+    flags = MetricFlags.NONE
+    console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_ASCEND
+
+
+class AscendPerformancePerWattMetric(_InjectedEnergyMetric):
+    """Ascend request throughput per watt of NPU power draw (req/s/W)."""
+
+    __is_abstract__ = False
+    tag = "ascend_performance_per_watt"
+    header = "Performance per Watt"
+    unit = GenericMetricUnit.REQUESTS_PER_SECOND_PER_WATT
+    display_order = 910
+    flags = MetricFlags.LARGER_IS_BETTER
+    console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_ASCEND
+
+
+class AscendOutputTokensPerSecondPerWattMetric(_InjectedEnergyMetric):
+    """Ascend output-token throughput per watt of NPU power draw (tokens/sec/W)."""
+
+    __is_abstract__ = False
+    tag = "ascend_output_tps_per_watt"
+    header = "Output Tokens per Second per Watt"
+    unit = GenericMetricUnit.TOKENS_PER_SECOND_PER_WATT
+    display_order = 912
+    flags = MetricFlags.LARGER_IS_BETTER | MetricFlags.PRODUCES_TOKENS_ONLY
+    console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_ASCEND
+
+
+class AscendGoodputPerWattMetric(_InjectedEnergyMetric):
+    """Ascend goodput (SLO-passing requests/sec) per watt of NPU power draw (good-req/s/W).
+
+    Only meaningful when goodput SLOs are configured; omitted otherwise."""
+
+    __is_abstract__ = False
+    tag = "ascend_goodput_per_watt"
+    header = "Goodput per Watt"
+    unit = GenericMetricUnit.GOODPUT_PER_WATT
+    display_order = 914
+    flags = MetricFlags.LARGER_IS_BETTER
+    console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_ASCEND
+
+
+class AscendAverageGpuPowerMetric(_InjectedEnergyMetric):
+    """Time-averaged total Ascend NPU power over the profiling window (W).
+
+    npu-smi exposes no energy counter, so this is the measured power gauge
+    averaged across scrapes rather than energy / duration."""
+
+    __is_abstract__ = False
+    tag = "ascend_average_gpu_power"
+    header = "Average GPU Power"
+    unit = PowerMetricUnit.WATT
+    display_order = 920
+    flags = MetricFlags.NONE
+    console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_ASCEND
+
+
+class AscendTotalGpuEnergyMetric(_InjectedEnergyMetric):
+    """Sum of Ascend NPU energy consumed during the phase (J).
+
+    Derived by integrating ``ascend_power`` over the profiling window because
+    npu-smi reports instantaneous power only."""
+
+    __is_abstract__ = False
+    tag = "ascend_total_gpu_energy"
+    header = "Total GPU Energy"
+    unit = EnergyMetricUnit.JOULE
+    display_order = 930
+    flags = MetricFlags.NONE
+    console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_ASCEND
+
+
+class AscendTotalGpuPowerMetric(_InjectedEnergyMetric):
+    """Sum of average Ascend NPU power across all Ascend cards during the phase (W)."""
+
+    __is_abstract__ = False
+    tag = "ascend_total_gpu_power"
+    header = "Total GPU Power"
+    unit = PowerMetricUnit.WATT
+    display_order = 940
+    flags = MetricFlags.NONE
+    console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_ASCEND
+
+
+class AscendEnergyPerTotalTokenMetric(_InjectedEnergyMetric):
+    """Ascend NPU energy per total (input + output) token (mJ/token)."""
+
+    __is_abstract__ = False
+    tag = "ascend_energy_per_total_token"
+    header = "Energy per Total Token"
+    unit = GenericMetricUnit.MILLIJOULES_PER_TOKEN
+    display_order = 945
+    flags = MetricFlags.NONE
+    console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_ASCEND
+
+
+class AscendEnergyPerOutputTokenMetric(_InjectedEnergyMetric):
+    """Ascend NPU energy per output token - the primary efficiency metric (mJ/token)."""
+
+    __is_abstract__ = False
+    tag = "ascend_energy_per_output_token"
+    header = "Energy per Output Token"
+    unit = GenericMetricUnit.MILLIJOULES_PER_TOKEN
+    display_order = 950
+    flags = MetricFlags.PRODUCES_TOKENS_ONLY
+    console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_ASCEND
+
+
+class AscendEnergyPerRequestMetric(_InjectedEnergyMetric):
+    """Ascend NPU energy per request (J/request)."""
+
+    __is_abstract__ = False
+    tag = "ascend_energy_per_request"
+    header = "Energy per Request"
+    unit = GenericMetricUnit.JOULES_PER_REQUEST
+    display_order = 955
+    flags = MetricFlags.NONE
+    console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_ASCEND
+
+
+class AscendOutputTokensPerJouleMetric(_InjectedEnergyMetric):
+    """Total output tokens per joule of Ascend NPU energy (tokens/J)."""
+
+    __is_abstract__ = False
+    tag = "ascend_output_tokens_per_joule"
+    header = "Output Tokens per Joule"
+    unit = GenericMetricUnit.TOKENS_PER_JOULE
+    display_order = 960
+    flags = MetricFlags.LARGER_IS_BETTER | MetricFlags.PRODUCES_TOKENS_ONLY
+    console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_ASCEND
+
+
+class AscendEnergyPerUserMetric(_InjectedEnergyMetric):
+    """Total Ascend NPU energy divided by configured concurrency (J/user).
+
+    Omitted when concurrency is unset (e.g. pure request-rate runs) or zero."""
+
+    __is_abstract__ = False
+    tag = "ascend_energy_per_user"
+    header = "Energy per User"
+    unit = GenericMetricUnit.JOULES_PER_USER
+    display_order = 965
+    flags = MetricFlags.NONE
+    console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_ASCEND

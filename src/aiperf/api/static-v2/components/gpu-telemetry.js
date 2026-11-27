@@ -24,19 +24,19 @@ import { fmtNumber, fmtInt } from '../lib/format.js';
  * ``GPUTelemetryAccumulator.generate_metric_results``), so ``baseName`` below
  * recovers ``<field>`` exactly as it appears in ``GPU_TELEMETRY_METRICS_CONFIG``
  * (``src/aiperf/gpu_telemetry/constants.py``). Each tile therefore lists its
- * per-vendor field names rather than one hardcoded prefix; NVIDIA and AMD name
- * the same physical signal differently (``nvidia_power_usage`` vs ``amd_power``),
- * so a single suffix cannot cover both.
+ * per-vendor field names rather than one hardcoded prefix; NVIDIA, AMD, and
+ * Ascend name the same physical signal differently (``nvidia_power_usage`` vs
+ * ``amd_power`` vs ``ascend_power``), so a single suffix cannot cover them.
  *
  * ``tests/unit/api/test_gpu_telemetry_tiles.py`` asserts every alias here still
  * exists in ``GPU_TELEMETRY_METRICS_CONFIG``, so the next backend rename fails
  * loudly in CI instead of silently blanking these tiles.
  */
 export const PRIMARY_TAGS = [
-  { label: 'Power',       aliases: ['nvidia_power_usage', 'amd_power'] },
-  { label: 'Utilization', aliases: ['nvidia_gpu_utilization', 'amd_gfx_activity'] },
-  { label: 'Temp',        aliases: ['nvidia_temperature', 'amd_temperature'] },
-  { label: 'Memory',      aliases: ['nvidia_memory_used', 'amd_memory_used'] },
+  { label: 'Power',       aliases: ['nvidia_power_usage', 'amd_power', 'ascend_power'] },
+  { label: 'Utilization', aliases: ['nvidia_gpu_utilization', 'amd_gfx_activity', 'ascend_aicore_utilization'] },
+  { label: 'Temp',        aliases: ['nvidia_temperature', 'amd_temperature', 'ascend_temperature'] },
+  { label: 'Memory',      aliases: ['nvidia_memory_used', 'amd_memory_used', 'ascend_memory_used'] },
 ];
 
 /** Extract (endpoint, gpuIndex, model) from a MetricResult header like

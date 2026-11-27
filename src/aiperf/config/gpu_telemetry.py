@@ -29,8 +29,8 @@ class GpuTelemetryConfig(BaseConfig):
 
     Collects GPU metrics through DCGM exporter endpoints by default. The
     ``collector`` field can switch to a local backend (``pynvml`` for NVIDIA,
-    ``amdsmi`` for AMD ROCm); ``mode`` controls summary vs. realtime dashboard
-    display.
+    ``amdsmi`` for AMD ROCm, ``npu_smi`` for Huawei Ascend); ``mode`` controls
+    summary vs. realtime dashboard display.
 
     Accepts shorthand forms:
         - String URL: "http://localhost:9400/metrics"
@@ -81,7 +81,8 @@ class GpuTelemetryConfig(BaseConfig):
             default=GPUTelemetryCollectorType.DCGM,
             description="GPU telemetry collector backend. Use 'dcgm' for DCGM "
             "exporter endpoints or a local collector (e.g. 'pynvml' for NVIDIA, "
-            "'amdsmi' for AMD ROCm) for on-host metrics collection.",
+            "'amdsmi' for AMD ROCm, 'npu_smi' for Huawei Ascend) for on-host "
+            "metrics collection.",
         ),
     ]
 
@@ -135,6 +136,15 @@ class GpuTelemetryConfig(BaseConfig):
 
         meta = plugins.get_gpu_telemetry_collector_metadata(self.collector)
         if not meta.is_local:
+            # Only DCGM has default endpoints; any other URL-based backend must be
+            # told where to scrape, otherwise the manager would silently probe the
+            # DCGM defaults and report them unreachable.
+            if not self.urls and self.collector != GPUTelemetryCollectorType.DCGM:
+                raise ValueError(
+                    f"Collector '{self.collector}' requires at least one metrics "
+                    "URL. Pass one URL per exporter, e.g. "
+                    "'http://<node-ip>:8082/metrics' for npu_exporter."
+                )
             return self
 
         if self.urls:

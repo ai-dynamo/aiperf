@@ -714,6 +714,11 @@ class MetricConsoleGroup(CaseInsensitiveStrEnum):
     energy/user). Rendered in their own vendor-attributed console section rather
     than the main metrics table."""
 
+    GPU_POWER_EFFICIENCY_ASCEND = "gpu_power_efficiency_ascend"
+    """Huawei Ascend cross-GPU power efficiency totals (power, energy, tokens/J,
+    energy/user). Rendered in their own vendor-attributed console section rather
+    than the main metrics table."""
+
 
 class MetricFlags(Flag):
     """Defines the possible flags for metrics that are used to determine how they are processed or grouped.
