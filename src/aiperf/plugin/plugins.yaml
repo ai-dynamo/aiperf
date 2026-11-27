@@ -1720,6 +1720,17 @@ accuracy_benchmark:
       default_grader: code_execution
       default_n_shots: 0
 
+  mwe_ai_risk:
+    class: aiperf.accuracy.benchmarks.mwe_ai_risk:MWEAIRiskBenchmark
+    description: |
+      Model-Written Evals advanced-ai-risk (Anthropic/model-written-evals,
+      CC-BY-4.0), LM-generated two-choice questions. Accuracy per behavior is
+      the share of answers matching the behavior. Defaults to the nine
+      loss-of-control behaviors; ``all`` selects all 17.
+    metadata:
+      default_grader: multiple_choice
+      default_n_shots: 0
+
 # =============================================================================
 # Communication Backends
 # =============================================================================

@@ -274,6 +274,8 @@ navigation:
   contents:
   - page: Accuracy Benchmarking
     path: accuracy/accuracy-benchmarking.md
+  - page: "Model-Written Evals: Advanced AI Risk"
+    path: tutorials/mwe-ai-risk.md
 
 - section: Reference
   collapsed: true

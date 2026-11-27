@@ -21,6 +21,15 @@ This document provides attribution information for public domain assets used in 
 
 > These works by William Shakespeare are in the public domain worldwide. No permission is required for any use.
 
+### Model-Written Evals (advanced-ai-risk)
+
+**Asset Information:**
+- **Used by**: [`src/aiperf/accuracy/benchmarks/mwe_ai_risk.py`](src/aiperf/accuracy/benchmarks/mwe_ai_risk.py) (the `mwe_ai_risk` accuracy benchmark)
+- **Source**: [Anthropic/model-written-evals](https://huggingface.co/datasets/Anthropic/model-written-evals), files `advanced-ai-risk/lm_generated_evals/*.jsonl` (downloaded at run time from revision `d533f626`, not vendored)
+- **Author**: Anthropic; Perez et al., "Discovering Language Model Behaviors with Model-Written Evaluations", 2022 ([arXiv:2212.09251](https://arxiv.org/abs/2212.09251))
+- **License**: [Creative Commons Attribution 4.0 International (CC-BY-4.0)](https://creativecommons.org/licenses/by/4.0/)
+- **Changes**: AIPerf drops questions that contain generation artifacts (`<META_START>`, `<META_END>`, `<EOT>`, `<NEWLINE>`, `[[`, `]]`, `CORRECT ANSWER`) or malformed labels, and appends an answer-format instruction to each question.
+
 ## Image Assets
 
 ### Getty Museum Images
@@ -561,6 +570,7 @@ This document provides attribution information for public domain assets used in 
 
 - **Public domain assets** (ShareGPT conversation data) - no legal restrictions on use
 - **MIT-licensed assets** (tiktoken encoding data, fzstd zstd decompressor) - permissive, requires copyright notice retention
+- **CC-BY-4.0 datasets** (Model-Written Evals, downloaded at run time) - requires attribution and a note of changes
 - **All assets compatible with Apache 2.0** license used by this project
 - **No endorsement implied** by original sources
 
