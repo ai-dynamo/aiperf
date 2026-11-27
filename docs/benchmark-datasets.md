@@ -68,6 +68,11 @@ This document describes datasets that AIPerf can use to generate stimulus. Addit
       <td>Expanded recorded agent sessions from <a href="https://huggingface.co/datasets/Exgentic/agent-llm-traces-v2"><code>--public-dataset exgentic_v2</code></a></td>
     </tr>
     <tr>
+      <td><strong>SWE-rebench OpenHands</strong></td>
+      <td style="text-align: center;">✅</td>
+      <td>Recorded OpenHands coding-agent trajectories from <a href="https://huggingface.co/datasets/nebius/SWE-rebench-openhands-trajectories"><code>--public-dataset swe_rebench_openhands</code></a></td>
+    </tr>
+    <tr>
       <td><strong>Agentic Code</strong></td>
       <td style="text-align: center;">✅</td>
       <td>Synthetic multi-turn coding-agent traces with shared prompt layers, repository context, and cache-aware turn growth. Generated via <a href="tutorials/agentic-code-generator.md"><code>aiperf synthesize agentic-code</code></a> and replayed as a Mooncake trace.</td>
@@ -111,6 +116,33 @@ aiperf profile \
 Fixed-schedule mode emits each recorded call as an independently scheduled one-turn request using its start offset from the source session. Calls that overlapped in the trace therefore overlap during replay. Selected source sessions start together at offset zero. Without `--fixed-schedule`, each source session remains a closed-loop multi-turn conversation: AIPerf waits for one live response before applying the recorded residual delay and sending the next request.
 
 Size the target context window for the selected trace plus the target model's chat-template overhead. Recorded contexts reach about 178K tokens, and some Gemini tool-calling sessions exceed 64K before target formatting. `tool_calling_with_shortlisting` alternates a selector request containing the full tool catalog with executor requests containing a changing subset of schemas. Low executor prefix-cache reuse is expected for that harness and is not a loader error.
+
+## SWE-rebench OpenHands Trajectory Replay
+
+`--public-dataset swe_rebench_openhands` streams recorded [OpenHands](https://github.com/All-Hands-AI/OpenHands) coding-agent trajectories from [`nebius/SWE-rebench-openhands-trajectories`](https://huggingface.co/datasets/nebius/SWE-rebench-openhands-trajectories). The dataset holds 67,074 trajectories and is licensed under CC-BY-4.0. Credit the dataset authors (Nebius) when you publish results from it. The loader pins revision `35455389ab51bf5e2306bfd436ef72d0f98bf882` and streams the single `trajectories.parquet` file rather than downloading it whole. Streaming fetches data in parquet row groups of 4,096 trajectories, so even a small run downloads one row group, roughly 365 MB compressed and about 1 GB uncompressed, before the first session is built. Expect that much extra memory in the dataset manager while the row group is read.
+
+Each trajectory becomes one session, keyed by its `trajectory_id`. Every recorded assistant message becomes one request. The request for a given assistant message carries the full recorded history before it, including system and user messages, earlier assistant messages, and tool results, in their recorded order. The recorded tool schemas are sent on every request. Tools are not executed, and live responses are not added to later requests. Messages after the last recorded assistant message are not sent, because no request answers them. `max_tokens` for each request is the token count of the recorded assistant message it answers (its content plus its serialized `tool_calls` JSON), counted with the run's configured tokenizer (`--tokenizer`). That tokenizer can differ from the target model's, and the target may encode tool calls differently, so treat the value as an approximate output cap. It is at least 1, so an empty answer still gets a one-token cap. Without a tokenizer, `max_tokens` is left unset.
+
+Trajectories carry no timestamps, so sessions run closed-loop with no recorded delays. Provide a finite materialization bound through `--num-conversations`, `--num-dataset-entries`, or `--request-count`; a config file's profiling-phase `sessions` count also works.
+
+```bash
+aiperf profile \
+  --model TARGET_MODEL \
+  --url http://localhost:8000/v1/chat/completions \
+  --endpoint-type chat \
+  --public-dataset swe_rebench_openhands \
+  --dataset-filter resolved=true \
+  --dataset-filter max_turns=32 \
+  --num-conversations 10 \
+  --concurrency 4
+```
+
+Two filters are available through `--dataset-filter`:
+
+- `resolved` (`true` or `false`) keeps only trajectories whose recorded `resolved` flag matches.
+- `max_turns` (a positive integer) keeps only the first N requests of each session.
+
+In a 100-trajectory sample (the first 100 rows), counted with the tiktoken `o200k_base` tokenizer, the final request of a session carries about 47K prompt tokens at the median, 77K at p95, and 98K at most. Counts include message content and serialized tool calls but exclude tool schemas and chat-template overhead. Sessions have 62 requests at the median and 100 at most. Size the target context window for the full trajectory plus the target model's chat-template overhead, or set `max_turns` to replay only the early part of each session on a model with a smaller context window.
 
 ## Hugging Face Mooncake Trajectory Replay
 
