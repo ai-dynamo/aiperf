@@ -2129,7 +2129,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         return timeslices
 
     async def _summarize_metric_record_accumulators(
-        self, phase: CreditPhase, cancelled: bool
+        self, phase: CreditPhase, cancelled: bool, *, include_timeslices: bool = True
     ) -> tuple[
         list[MetricResult], list[TimesliceResult], list[ErrorDetails], SummaryContext
     ]:
@@ -2172,6 +2172,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             phase=phase,
             error_summary=self._error_tracker.get_error_summary_for_phase(phase),
             cancelled=cancelled,
+            include_timeslices=include_timeslices,
         )
         summaries = await asyncio.gather(
             *[
@@ -2348,6 +2349,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 stats.phase, phase_index=stats.phase_index
             ),
             cancelled=cancelled,
+            include_timeslices=False,
         )
 
     @staticmethod
@@ -2595,6 +2597,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         ) = await self._summarize_metric_record_accumulators(
             CreditPhase.WARMUP,
             self._records_tracker.was_phase_cancelled(CreditPhase.WARMUP),
+            include_timeslices=False,
         )
         if error_results:
             for error in error_results:

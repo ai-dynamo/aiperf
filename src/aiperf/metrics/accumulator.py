@@ -65,6 +65,9 @@ if TYPE_CHECKING:
 
 FloatArray: TypeAlias = NDArray[np.float64]
 BoolArray: TypeAlias = NDArray[np.bool_]
+# Record selector: a boolean mask or ascending record indices (equivalent under
+# numpy fancy indexing; timeslices pass indices to avoid full-length masks).
+RecordSelector: TypeAlias = NDArray[np.bool_] | NDArray[np.integer]
 # (value positions sorted by slice, slice b at order[bounds[b] : bounds[b + 1]])
 SliceIndex: TypeAlias = tuple[NDArray[np.integer], NDArray[np.int64]]
 
@@ -410,7 +413,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     def _compute_results(
         self,
-        mask: BoolArray | None = None,
+        mask: RecordSelector | None = None,
         *,
         window_start_ns: int | None = None,
         window_end_ns: int | None = None,
@@ -447,14 +450,15 @@ class MetricsAccumulator(BaseMetricsProcessor):
         output = self._build_metric_results(scalar_dict, record_arrays, sketch_results)
 
         n = self._column_store.count
-        if mask is not None:
+        if mask is not None and mask.dtype == np.bool_:
             # Cap to mask length: mask was snapshotted before this call and
             # concurrent ingestion (asyncio.to_thread race) may have grown count.
+            # Index selectors only name records that existed at the snapshot.
             n = min(n, len(mask))
         if n > 0:
             is_error = self._column_store.metadata_bool("has_error")[:n] == 1
             if mask is not None:
-                is_error = is_error & mask
+                is_error = is_error[mask]
             error_count = int(is_error.sum())
             inject_adjusted_latency_metrics(
                 output, record_arrays, error_count, self._metric_classes
@@ -493,7 +497,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     def _collect_scalars_and_arrays(
         self,
-        mask: BoolArray | None,
+        mask: RecordSelector | None,
         scalar_dict: MetricResultsDict,
         record_arrays: dict[MetricTagT, tuple[FloatArray, float]],
         sketch_results: dict[MetricTagT, MetricResult],
@@ -511,7 +515,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
             else:
                 # Cap to mask length before boolean indexing — concurrent ingestion
                 # (asyncio.to_thread race) may have grown the column beyond the mask snapshot.
-                values = store.numeric(tag)[: len(mask)][mask]
+                col = store.numeric(tag)
+                if mask.dtype == np.bool_:
+                    col = col[: len(mask)]
+                values = col[mask]
                 clean = values[~np.isnan(values)]
             if len(clean) == 0:
                 continue
@@ -542,7 +549,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         self,
         tag: MetricTagT,
         *,
-        mask: BoolArray | None,
+        mask: RecordSelector | None,
         full_dataset: bool,
         scalar_dict: MetricResultsDict,
         record_arrays: dict[MetricTagT, tuple[FloatArray, float]],
@@ -811,9 +818,13 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # publishing. Keep that path on the event loop so column-store mutation
         # cannot race a worker thread traversing its arrays.
         if ctx.cancelled:
-            return self._summarize_for_export_context(ctx, include_timeslices=True)
+            return self._summarize_for_export_context(
+                ctx, include_timeslices=ctx.include_timeslices
+            )
         return await asyncio.to_thread(
-            self._summarize_for_export_context, ctx, include_timeslices=True
+            self._summarize_for_export_context,
+            ctx,
+            include_timeslices=ctx.include_timeslices,
         )
 
     def _inject_sweep_metrics(
@@ -907,14 +918,20 @@ class MetricsAccumulator(BaseMetricsProcessor):
         record_bin = np.full(n, -1, dtype=np.int32)
         record_bin[filled_indices] = bins
         ragged_index = self._build_slice_ragged_index(record_bin, len(edges) - 1)
+        # Group the selected records by slice once: a stable sort keeps storage
+        # order inside each slice, so ``filled_indices[order[lo:hi]]`` is the
+        # ascending index set of slice ``b`` (identical to ``np.where`` of its
+        # boolean mask) at O(records in the slice) per slice instead of O(n).
+        order = np.argsort(bins, kind="stable")
+        bounds = np.concatenate(
+            ([0], np.cumsum(np.bincount(bins, minlength=len(edges) - 1)))
+        )
 
         for bin_idx in range(len(edges) - 1):
-            bin_mask_local = bins == bin_idx
-            if not bin_mask_local.any():
+            lo, hi = bounds[bin_idx], bounds[bin_idx + 1]
+            if lo == hi:
                 continue
-            # Expand local mask to full-array mask
-            full_mask = np.zeros(n, dtype=bool)
-            full_mask[filled_indices[bin_mask_local]] = True
+            slice_indices = filled_indices[order[lo:hi]]
 
             raw_window_end = float(edges[bin_idx + 1])
             window_start = float(edges[bin_idx])
@@ -925,13 +942,13 @@ class MetricsAccumulator(BaseMetricsProcessor):
             window_end = raw_window_end if is_complete else max_ts
 
             results = self._compute_results(
-                full_mask,
+                slice_indices,
                 window_start_ns=int(window_start),
                 window_end_ns=int(window_end),
                 is_timeslice=True,
                 ragged_positions={
-                    tag: order[bounds[bin_idx] : bounds[bin_idx + 1]]
-                    for tag, (order, bounds) in ragged_index.items()
+                    tag: r_order[r_bounds[bin_idx] : r_bounds[bin_idx + 1]]
+                    for tag, (r_order, r_bounds) in ragged_index.items()
                 },
             )
             if len(results) == 0:
@@ -947,7 +964,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
                     adjusted_arrays,
                     results,
                     self._network_rtt_ns,
-                    mask=full_mask,
+                    mask=slice_indices,
                 )
             results = self._filter_hidden_metrics(results)
             timeslices.append(
@@ -982,7 +999,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
             # Records ingested after ``record_bin`` was sized fall in no slice,
             # as in get_values_for_mask.
             in_bounds = rec_idx < len(record_bin)
-            value_bin = np.full(len(rec_idx), -1, dtype=np.int32)
+            # numpy stable-sorts 16-bit keys with a radix sort instead of a
+            # comparison sort, so narrow the slice keys whenever the grid fits.
+            key_dtype = np.int16 if n_bins < np.iinfo(np.int16).max else np.int32
+            value_bin = np.full(len(rec_idx), -1, dtype=key_dtype)
             value_bin[in_bounds] = record_bin[rec_idx[in_bounds]]
             order = np.argsort(value_bin, kind="stable")
             if len(order) <= np.iinfo(np.int32).max:

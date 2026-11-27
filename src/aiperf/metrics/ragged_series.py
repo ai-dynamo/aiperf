@@ -73,9 +73,13 @@ class RaggedSeries:
         self.extend(idx, values)
 
     def get_values_for_mask(
-        self, record_mask: NDArray[np.bool_]
+        self, record_mask: NDArray[np.bool_] | NDArray[np.integer]
     ) -> NDArray[np.float64]:
-        """Return values whose record is selected by the boolean mask.
+        """Return values whose record is selected, in storage order.
+
+        ``record_mask`` is either a boolean mask over records or the record
+        indices themselves (how timeslices select records); both yield the
+        same values in the same order.
 
         Two races with concurrent ingestion (asyncio.to_thread vs event loop):
 
@@ -92,6 +96,10 @@ class RaggedSeries:
         if n_items == 0:
             return np.zeros(0, dtype=np.float64)
         values_data = self._values.data[:n_items]  # cap to consistent length
+        if record_mask.dtype != np.bool_:
+            # Index selector: records appended after the snapshot are simply
+            # absent from it, so no bounds handling is needed.
+            return values_data[np.isin(rec_idx, record_mask)]
         n_mask = len(record_mask)
         if n_mask == 0:
             return np.zeros(0, dtype=np.float64)

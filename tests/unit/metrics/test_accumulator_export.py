@@ -15,7 +15,7 @@ async def test_cancelled_export_does_not_offload_live_column_store_read() -> Non
     accumulator = MetricsAccumulator.__new__(MetricsAccumulator)
     expected = MagicMock()
     accumulator._summarize_for_export_context = MagicMock(return_value=expected)
-    context = MagicMock(cancelled=True)
+    context = MagicMock(cancelled=True, include_timeslices=True)
 
     with patch(
         "aiperf.metrics.accumulator.asyncio.to_thread", new_callable=AsyncMock

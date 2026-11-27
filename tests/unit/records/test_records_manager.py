@@ -480,6 +480,38 @@ class TestRecordsManagerMetricRecordDispatchErrors:
         assert results is not None
         assert [r.phase_name for r in results] == ["warmup", "load"]
 
+    def test_phase_scoped_export_skips_timeslices(self) -> None:
+        """Per-phase breakdowns only keep run-level results."""
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._error_tracker = ErrorTracker()
+        stats = PhaseRecordsStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=1,
+            profiling_index=0,
+            phase_name="load",
+            phase_kind="profiling",
+            start_ns=3_000,
+            requests_end_ns=4_000,
+        )
+
+        ctx = RecordsManager._phase_metric_export_context(
+            manager, stats, cancelled=False
+        )
+
+        assert ctx.include_timeslices is False
+        assert (ctx.start_ns, ctx.end_ns, ctx.phase_index) == (3_000, 4_000, 1)
+
+    @pytest.mark.asyncio
+    async def test_warmup_summary_skips_timeslices(self) -> None:
+        base = [MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0)]
+        manager = self._warmup_summary_manager(warmup_overflow=0, base_metrics=base)
+
+        await RecordsManager._summarize_warmup_metric_records(manager)
+
+        manager._summarize_metric_record_accumulators.assert_awaited_once_with(
+            CreditPhase.WARMUP, False, include_timeslices=False
+        )
+
     @staticmethod
     def _warmup_summary_manager(
         warmup_overflow: int, base_metrics: list[MetricResult]

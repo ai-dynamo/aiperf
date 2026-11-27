@@ -47,11 +47,11 @@ def to_display_unit(result: MetricResult, registry: MetricRegistry) -> MetricRes
     if not callable(convert_to):
         return result
 
-    record = result.model_copy(deep=True)
-    record.unit = display_unit_value
-
+    # Every field is a scalar, so a shallow copy with the converted stats is
+    # the deep copy without the per-call walk of the model's internals.
+    updates: dict[str, Any] = {"unit": display_unit_value}
     for stat in STAT_KEYS:
-        val = getattr(record, stat, None)
+        val = getattr(result, stat, None)
         if val is None:
             continue
         # Only convert numeric values. ``+inf`` (failure-inflation sentinel
@@ -60,14 +60,12 @@ def to_display_unit(result: MetricResult, registry: MetricRegistry) -> MetricRes
         # required — the convert_to call returns ``inf`` unchanged.
         if isinstance(val, int | float):
             try:
-                new_value = convert_to(display_unit, val)
+                updates[stat] = convert_to(display_unit, val)
             except MetricUnitError as e:
                 _logger.warning(
                     f"Error converting {stat} for {result.tag} from {unit_value} to {display_unit_value}: {e}"
                 )
-                continue
-            setattr(record, stat, new_value)
-    return record
+    return result.model_copy(update=updates)
 
 
 def _unit_value(unit: Any) -> str | None:
