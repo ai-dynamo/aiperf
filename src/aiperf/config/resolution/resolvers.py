@@ -80,7 +80,7 @@ class ArtifactDirResolver:
         Args:
             run: The BenchmarkRun whose ``cfg.artifacts.dir`` to normalize.
             for_probe: When True, skip user_files materialization. The probe
-                run in ``cli_runner._estimate_and_log_duration`` clones
+                run in ``cli_runner._estimate_and_log_duration`` wraps
                 ``first_config`` only to estimate duration; per-variation runs
                 materialize user_files into their own dirs, so writing them
                 here would produce a stray artifact tree and bake in template
