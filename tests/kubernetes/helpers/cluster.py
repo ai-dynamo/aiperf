@@ -19,8 +19,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
+import subprocess
+import threading
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from enum import Enum
@@ -123,6 +126,297 @@ async def _kubectl_apply_stdin(context: str, manifest: str) -> None:
     _, stderr = await proc.communicate(input=manifest.encode())
     if proc.returncode != 0:
         raise RuntimeError(f"kubectl apply failed: {stderr.decode()}")
+
+
+# ============================================================================
+# CPU overcommit for local Kind clusters
+# ============================================================================
+
+KIND_CPU_OVERCOMMIT_FLOOR: int = 32
+"""Fake CPU capacity floor (in whole cores) a suite may opt into for local
+Kind nodes (``--k8s-node-cpu-overcommit`` / ``K8S_TEST_NODE_CPU_OVERCOMMIT``,
+default off).
+
+The operator deploys production-calibrated pod requests (one AIPerfJob wants
+~6 CPUs across its controller and worker pods; the mock server alone requests
+2). A single-node Kind cluster on a 4-vCPU CI runner cannot admit them, so
+pods sat Pending with FailedScheduling/Insufficient cpu until the test timed
+out (the weekly audit workflow failed 4/4 scheduled runs this way).
+
+Kind already overcommits in the other direction — every node advertises the
+*host's* CPU count regardless of what the node container could actually use —
+so raising the advertised floor for test clusters keeps pod requests honest
+(production defaults stay meaningful) while making the test cluster admit the
+test workload. The runner's real CPUs are unchanged: admitted pods contend
+for actual CPU, which is exactly what the suites already tolerate (audit
+tolerance bands exist because of this contention). Only CPU is faked; memory
+accounting stays real so OOM behavior is unchanged.
+"""
+
+CPU_OVERCOMMIT_INTERVAL_SECONDS: float = 5.0
+"""Re-assert cadence for the faked capacity.
+
+Kubelet recomputes real capacity/allocatable on every node-status sync
+(~every 10s) and patches the API object back whenever it detects drift
+(pkg/kubelet/kubelet_node_status.go tryUpdateNodeStatus). Measured on kind
+v0.27.0 / k8s v1.32.2: a one-shot patch reverted within <=30s. The fixture
+therefore re-applies on this interval for the life of the test session, from
+a daemon thread that is independent of any pytest-asyncio event loop.
+"""
+
+_KIND_PROVIDER_ID_PREFIX = "kind://"
+"""spec.providerID prefix set by Kind's cloud-provider on every node it
+manages. Used as the locality proof before faking capacity: a repointed
+kubectl context that silently targets a remote cluster must never have its
+nodes patched, so only nodes carrying this marker are eligible."""
+
+
+def parse_cpu_millicores(quantity: str) -> int:
+    """Parse a Kubernetes CPU quantity ('4', '4000m', '2500m') to millicores."""
+    quantity = quantity.strip()
+    if quantity.endswith("m"):
+        return int(quantity[:-1])
+    return int(float(quantity) * 1000)
+
+
+def node_cpu_overcommit_patch(
+    capacity_cpu: str, allocatable_cpu: str, floor_cpus: int
+) -> str | None:
+    """JSON status patch raising a node's CPU capacity/allocatable to the floor.
+
+    Each field is raised independently and only ever raised: a node with
+    capacity 64 but allocatable 31 keeps its 64-core capacity while its
+    allocatable rises to the floor. Returns None when neither field is below
+    the floor.
+    """
+    ops: list[dict[str, str]] = []
+    for path, current in (
+        ("/status/capacity/cpu", capacity_cpu),
+        ("/status/allocatable/cpu", allocatable_cpu),
+    ):
+        if parse_cpu_millicores(current) < floor_cpus * 1000:
+            ops.append({"op": "replace", "path": path, "value": str(floor_cpus)})
+    return json.dumps(ops) if ops else None
+
+
+def select_overcommit_targets(
+    nodes: list[tuple[str, str, str, str]],
+    floor_cpus: int,
+    expected_names: set[str],
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """Partition (name, providerID, capacity, allocatable) rows into patch
+    targets and skipped nodes.
+
+    Two independent locality proofs, both required before a node is touched:
+
+    - ``expected_names`` binds selection to the fixture-owned cluster: the
+      local_cluster fixture passes the node set of the cluster it created or
+      verified, so a repointed context that resolves to a DIFFERENT Kind
+      cluster (e.g. a remote one) selects nothing.
+    - the ``kind://`` providerID marker proves the provider type.
+
+    Returns ((name, patch_body)..., skipped...).
+    """
+    targets: list[tuple[str, str]] = []
+    skipped: list[str] = []
+    for name, provider_id, capacity, allocatable in nodes:
+        if name not in expected_names:
+            skipped.append(name)
+            continue
+        if not provider_id.startswith(_KIND_PROVIDER_ID_PREFIX):
+            skipped.append(name)
+            continue
+        patch = node_cpu_overcommit_patch(capacity, allocatable, floor_cpus)
+        if patch is not None:
+            targets.append((name, patch))
+    return targets, skipped
+
+
+def _kubectl_sync(
+    context: str, *args: str, check: bool = True, timeout: float = 30.0
+) -> subprocess.CompletedProcess[str]:
+    """Synchronous kubectl with ``--context`` (for the reconciler thread).
+
+    Every call is double-bounded — ``--request-timeout`` at the apiserver
+    level and a subprocess timeout — so a wedged apiserver can never hang the
+    reconciler thread past teardown.
+    """
+    return subprocess.run(
+        ["kubectl", "--context", context, "--request-timeout=10s", *args],
+        capture_output=True,
+        text=True,
+        check=check,
+        timeout=timeout,
+    )
+
+
+async def kind_cluster_node_names(cluster_name: str) -> set[str]:
+    """Node names of a LOCAL Kind cluster, via the kind CLI.
+
+    kind queries the local Docker daemon by container label
+    (io.x-k8s.kind.cluster=<name>) — it never touches the Kubernetes API, so
+    unlike ``kubectl get nodes`` this answer cannot be poisoned by a
+    repointed kubectl context. This is the locality anchor for the CPU
+    overcommit allowlist: only node names that exist as local Docker
+    containers are patch-eligible.
+    """
+    rc, stdout, _ = await _run_quiet(["kind", "get", "nodes", "--name", cluster_name])
+    if rc != 0:
+        return set()
+    return {line.strip() for line in stdout.splitlines() if line.strip()}
+
+
+def apply_cpu_overcommit_sync(
+    context: str,
+    floor_cpus: int,
+    expected_nodes: set[str],
+    *,
+    should_abort: Callable[[], bool] | None = None,
+) -> list[str]:
+    """Patch eligible under-floor nodes of the fixture-owned Kind cluster to
+    advertise ``floor_cpus``.
+
+    Only nodes in ``expected_nodes`` (derived from the kind CLI against the
+    local Docker daemon — never from the Kubernetes API of the context under
+    test) that also carry the kind:// providerID marker are patched. Returns
+    the names of the nodes that were patched. Safe to call repeatedly;
+    kubelet re-asserts real capacity on its node-status sync, so the
+    reconciler calls this on an interval for the session's lifetime.
+    ``should_abort`` is consulted between sub-operations so teardown is not
+    queued behind a whole node list.
+    """
+    result = _kubectl_sync(
+        context,
+        "get",
+        "nodes",
+        "-o",
+        "jsonpath={range .items[*]}{.metadata.name} {.spec.providerID} "
+        "{.status.capacity.cpu} {.status.allocatable.cpu}{'\\n'}{end}",
+    )
+    nodes = [
+        tuple(line.split())
+        for line in result.stdout.splitlines()
+        if len(line.split()) == 4
+    ]
+    targets, skipped = select_overcommit_targets(nodes, floor_cpus, expected_nodes)
+    if skipped:
+        logger.warning(
+            f"CPU overcommit: skipping node(s) {skipped} — not a member of the "
+            f"fixture-owned cluster {sorted(expected_nodes)} or missing the "
+            f"'{_KIND_PROVIDER_ID_PREFIX}' provider marker; refusing to fake "
+            "capacity on what may be a remote cluster"
+        )
+    patched: list[str] = []
+    for name, patch in targets:
+        if should_abort is not None and should_abort():
+            break
+        _kubectl_sync(
+            context,
+            "patch",
+            "node",
+            name,
+            "--subresource=status",
+            "--type=json",
+            f"-p={patch}",
+        )
+        patched.append(name)
+    if patched:
+        logger.info(
+            f"CPU overcommit: node(s) {patched} now advertise >= {floor_cpus} CPUs "
+            "(opt-in test-cluster scheduling floor; real runner CPUs unchanged)"
+        )
+    return patched
+
+
+class CpuOvercommitReconciler:
+    """Re-applies the fake CPU floor from a daemon thread.
+
+    This must NOT be an asyncio task on a pytest-asyncio fixture loop:
+    package-scoped fixtures run on the package loop, but tests run on
+    function-scoped loops, and while a test's loop runs the package loop is
+    suspended — a reconcile task there would freeze for the entire test body,
+    letting kubelet re-assert real capacity exactly when pods schedule. A
+    plain thread keeps patching regardless of which event loop is active.
+
+    ``start()`` applies the floor once synchronously (raising on failure, so
+    a broken patch path fails the fixture fast) and spawns the daemon thread.
+    ``stop()`` signals shutdown and join-verifies the thread exits.
+    """
+
+    def __init__(
+        self,
+        context: str,
+        floor_cpus: int,
+        expected_nodes: set[str],
+        *,
+        interval_seconds: float = CPU_OVERCOMMIT_INTERVAL_SECONDS,
+        apply_fn: Callable[[], list[str]] | None = None,
+    ) -> None:
+        """Bind the reconciler to the fixture-owned cluster's node set.
+
+        ``expected_nodes`` is the locality anchor: only those node names
+        (further required to carry the kind:// providerID) are ever patched.
+        """
+        self._context = context
+        self._floor_cpus = floor_cpus
+        self._expected_nodes = expected_nodes
+        self._interval = interval_seconds
+        self._apply_fn = apply_fn or (
+            lambda: apply_cpu_overcommit_sync(
+                context,
+                floor_cpus,
+                expected_nodes,
+                should_abort=self._stop.is_set,
+            )
+        )
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.apply_count = 0
+
+    def apply_once(self) -> list[str]:
+        """Apply the floor once, synchronously. Raises on kubectl failure."""
+        patched = self._apply_fn()
+        self.apply_count += 1
+        return patched
+
+    def start(self) -> None:
+        """Eagerly apply (fail-fast on error), then start the daemon thread."""
+        self.apply_once()
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"cpu-overcommit-{self._context}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._interval):
+            try:
+                self.apply_once()
+            except Exception as exc:  # transient kubectl failure; keep looping
+                logger.warning(f"CPU overcommit re-apply failed: {exc}")
+
+    def stop(self, timeout: float = 45.0) -> None:
+        """Signal the thread to stop and join it with a bound that exceeds
+        the kubectl call bound (30s), so a live thread after the join means
+        a genuine wedge, not a mid-request race. The stop event is also
+        consulted between every patch sub-operation, so the loop cannot
+        outlive fixture teardown and mutate a later cluster. Never raises
+        past teardown; a survived thread keeps its reference and is logged
+        as an error."""
+        if self._thread is None:
+            return
+        self._stop.set()
+        self._thread.join(timeout=timeout)
+        if self._thread.is_alive():
+            logger.error(
+                "CPU overcommit reconciler thread survived a "
+                f"{timeout}s join despite bounded kubectl calls — wedged; "
+                "daemon thread dies with the process, but this indicates a "
+                "real bug in the reconcile path"
+            )
+            return  # keep the reference for inspection
+        self._thread = None
 
 
 async def _create_nvidia_runtime_class(context: str) -> None:
