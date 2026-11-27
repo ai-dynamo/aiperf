@@ -156,7 +156,9 @@ class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
                 future.set_result(response_message)
             else:
                 self.debug(
-                    lambda: f"Received response for request {message.request_id} after it was already completed. Ignoring."
+                    lambda: (
+                        f"Received response for request {message.request_id} after it was already completed. Ignoring."
+                    )
                 )
 
         await self.request_async(message, callback)

@@ -39,8 +39,12 @@ class TimesliceMetricsCsvExporter(MetricsBaseExporter):
             exporter_config.cfg.artifacts.profile_export_timeslices_csv_file
         )
         self.trace_or_debug(
-            lambda: f"Initializing TimesliceMetricsCsvExporter with config: {exporter_config}",
-            lambda: f"Initializing TimesliceMetricsCsvExporter with file path: {self._file_path}",
+            lambda: (
+                f"Initializing TimesliceMetricsCsvExporter with config: {exporter_config}"
+            ),
+            lambda: (
+                f"Initializing TimesliceMetricsCsvExporter with file path: {self._file_path}"
+            ),
         )
 
     def get_export_info(self) -> FileExportInfo:

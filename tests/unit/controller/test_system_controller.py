@@ -807,8 +807,8 @@ class TestStopHookHardening:
             side_effect=lambda *_a, **_kw: order.append("shutdown_broadcast")
         )
         system_controller.publish = AsyncMock()
-        mock_service_manager.shutdown_all_services.side_effect = (
-            lambda **_kw: order.append("services_stopped")
+        mock_service_manager.shutdown_all_services.side_effect = lambda **_kw: (
+            order.append("services_stopped")
         )
         system_controller.comms.stop.side_effect = lambda: order.append("comms_stopped")
 

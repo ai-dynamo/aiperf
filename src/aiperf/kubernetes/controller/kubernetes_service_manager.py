@@ -114,8 +114,10 @@ class KubernetesServiceManager(PodMonitoringMixin, MultiProcessServiceManager):
         """
         if self._is_external_service(service_type):
             self.debug(
-                lambda: f"Expecting {num_replicas} external {service_type} "
-                "instance(s) to register"
+                lambda: (
+                    f"Expecting {num_replicas} external {service_type} "
+                    "instance(s) to register"
+                )
             )
             ServiceRegistry.expect_services({service_type: num_replicas})
             return
@@ -153,8 +155,10 @@ class KubernetesServiceManager(PodMonitoringMixin, MultiProcessServiceManager):
         """
         if self._is_external_service(service_type):
             self.debug(
-                lambda: f"stop_service called for {service_type} "
-                "(no-op - externally managed in Kubernetes)"
+                lambda: (
+                    f"stop_service called for {service_type} "
+                    "(no-op - externally managed in Kubernetes)"
+                )
             )
             return []
 

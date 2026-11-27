@@ -289,9 +289,11 @@ class CodegenGradingWorker:
         # tests and diagnostics.
         tail = await self._kill()
         _log.debug(
-            lambda: f"codegen worker fault (proven={self._worker_proven}, "
-            f"start_failures={self._start_failures}); killed + respawning next grade"
-            + (f"; stderr tail:\n{chr(10).join(tail)}" if tail else "")
+            lambda: (
+                f"codegen worker fault (proven={self._worker_proven}, "
+                f"start_failures={self._start_failures}); killed + respawning next grade"
+                + (f"; stderr tail:\n{chr(10).join(tail)}" if tail else "")
+            )
         )
         for fut in list(self._pending.values()):
             if not fut.done():
