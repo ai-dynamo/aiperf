@@ -29,12 +29,12 @@ _MIN_LOCAL_POINTS = 3
 
 
 def detect_cliff(
-    raw_points: list[tuple[int, float]],
+    raw_points: list[tuple[int | float, float]],
     fitted_curve: Callable[[float], float],
     *,
-    feasible_max: int | None,
-    infeasible_min: int | None,
-    x_hi: int,
+    feasible_max: int | float | None,
+    infeasible_min: int | float | None,
+    x_hi: int | float,
     precision: float | None = None,
 ) -> bool:
     """Return True iff the last raw probe sits outside the smooth fit and the bracket is still wide.
