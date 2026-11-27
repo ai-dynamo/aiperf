@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 import orjson
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.enums import ExportLevel
+from aiperf.common.enums import CreditPhase, ExportLevel
 from aiperf.common.hooks import on_init
 from aiperf.common.mixins import CommunicationMixin
 from aiperf.common.models import (
@@ -32,8 +32,9 @@ from aiperf.common.models.record_models import (
 from aiperf.common.scenario import is_context_overflow_response
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType
+from aiperf.plugin.enums import EndpointType, PluginType
 from aiperf.records.payload_retention import resolve_disable_tokenization
+from aiperf.records.verified_token_gaps import observe_chat_token_gaps
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -84,6 +85,11 @@ class InferenceResultParser(CommunicationMixin):
         # is loaded directly.
         self._tokenizer_bundles: dict[str, str] = {}
         self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_run(run)
+        self._observe_token_gaps = (
+            run.cfg.artifacts.verified_token_gaps
+            and run.cfg.endpoint.type == EndpointType.CHAT
+            and run.cfg.endpoint.streaming
+        )
         EndpointClass = plugins.get_class(
             PluginType.ENDPOINT, self.model_endpoint.endpoint.type
         )
@@ -358,6 +364,15 @@ class InferenceResultParser(CommunicationMixin):
             )
 
         resp = self.endpoint.extract_response_data(request_record)
+        ctx = request_record.request_info
+        verified_token_gaps_ns = (
+            observe_chat_token_gaps(request_record)
+            if self._observe_token_gaps
+            and ctx is not None
+            and ctx.credit_phase == CreditPhase.PROFILING
+            and not request_record.was_cancelled
+            else None
+        )
 
         # Free the raw responses list after extraction.
         # Skip when RAW export needs the original responses for serialization.
@@ -376,7 +391,6 @@ class InferenceResultParser(CommunicationMixin):
 
         # Stripped payload bytes leave no inputs; the worker counted the
         # sequences before stripping them.
-        ctx = request_record.request_info
         if inputs is not None:
             num_choices = inputs.num_choices
         elif ctx is not None and ctx.num_choices is not None:
@@ -411,6 +425,7 @@ class InferenceResultParser(CommunicationMixin):
             media_counts=media_counts or MediaCounts(),
             spec_decode_acceptance=spec_decode_acceptance,
             spec_decode_zero_step=spec_decode_zero_step,
+            verified_token_gaps_ns=verified_token_gaps_ns,
         )
 
     @staticmethod

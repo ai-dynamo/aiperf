@@ -572,6 +572,11 @@ spec:
                         description: Export generated response text after the run, to `outputs.json` or `<prefix>_outputs.json`
                           when `prefix` is set. Unset (the default) means the `raw` export level implies it; set False to
                           opt out at raw, True to force it at any level. Always a concrete bool once validation has run.
+                      verifiedTokenGaps:
+                        type: boolean
+                        description: Summarize verified client-observed token gaps from single-choice Chat Completions SSE
+                          streams with per-event content logprobs.
+                        default: false
                   slos:
                     type: object
                     additionalProperties:

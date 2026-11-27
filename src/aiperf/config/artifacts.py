@@ -214,6 +214,12 @@ class ArtifactsConfig(BaseConfig):
         ),
     ]
 
+    verified_token_gaps: bool = Field(
+        default=False,
+        description="Summarize verified client-observed token gaps from single-choice "
+        "Chat Completions SSE streams with per-event content logprobs.",
+    )
+
     @model_validator(mode="after")
     def validate_artifacts(self) -> ArtifactsConfig:
         """Validate artifact configuration."""

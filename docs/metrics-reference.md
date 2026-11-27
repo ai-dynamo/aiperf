@@ -408,6 +408,46 @@ inter_chunk_latency = [request.content_responses[i].perf_ns - request.content_re
 - Requires at least 2 qualifying parsed responses on the shared response timeline. With `--allow-empty-content`, explicit empty Chat Completions content or reasoning strings are included.
 - Unlike ITL (which produces a single average), ICL provides the full distribution of inter-chunk times.
 - Useful for detecting variability, jitter, or issues in streaming delivery.
+
+### Verified Token Gap Latency
+
+Set `benchmark.artifacts.verifiedTokenGaps: true` in the benchmark YAML to
+collect a distribution for streaming Chat Completions. This configuration also
+requests sampled-token logprobs from the server through `benchmark.endpoint.extra`.
+
+```yaml
+benchmark:
+  endpoint:
+    type: chat
+    streaming: true
+    extra:
+      logprobs: true
+  artifacts:
+    verifiedTokenGaps: true
+```
+
+AIPerf measures adjacent visible text tokens on successful, non-cancelled
+profiling requests. The prototype accepts single-choice SSE streams with a
+`stop` or `length` finish reason and a `[DONE]` marker. A token qualifies when
+`choices[0].logprobs.content` contains exactly one sampled token and its
+`bytes` match the event's entire text delta. The implementation requires these
+bytes for each sampled token. Empty SSE data events, reasoning and other
+non-text output, missing or mismatched logprobs, multi-token events, and
+content events completed by the same read break adjacency. Role-only,
+usage-only, comment-only, and terminal markers contribute no samples. Warmup
+requests contribute no samples.
+
+The worker uses `time.perf_counter_ns()` at the client read that completes
+each SSE event. Gaps include transport and buffering effects. The JSON summary
+reports pooled gaps in milliseconds, with exact percentiles over accepted
+samples and a count of those samples. A single-token reply contributes no gap.
+Request coverage reports how many successful profiling requests contributed at
+least one sample. Collection retains accepted samples in memory, including when
+other list metrics use the t-digest backend, so phase-specific summaries can
+select the right records.
+
+See the [JSON export schema](reference/json-export-schema.md#verified-token-gaps)
+for the coverage and zero-sample representation.
 - Analyzing ICL distributions can reveal batching behavior, scheduling issues, or network variability.
 
 ---
