@@ -8,13 +8,18 @@ ONLY ADD FIXTURES HERE THAT ARE USED IN ALL TEST TYPES.
 DO NOT ADD FIXTURES THAT ARE ONLY USED IN A SPECIFIC TEST TYPE.
 """
 
+import asyncio
 import math
 import os
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
 import psutil
 import pytest
+
+from aiperf.common.constants import IS_WINDOWS
+from aiperf.common.event_loop import aiperf_event_loop_policy
 
 PYTEST_AUTO_WORKER_CPU_FRACTION_ENV = "AIPERF_PYTEST_AUTO_WORKER_CPU_FRACTION"
 PYTEST_XDIST_AUTO_WORKERS_ENV = "PYTEST_XDIST_AUTO_NUM_WORKERS"
@@ -236,3 +241,21 @@ def pytest_xdist_auto_num_workers(config: pytest.Config) -> int | None:
         _detect_pytest_cpu_capacity(),
         _get_pytest_auto_worker_cpu_fraction(),
     )
+
+
+if IS_WINDOWS:
+
+    def pytest_asyncio_loop_factories(
+        config: pytest.Config, item: pytest.Item
+    ) -> dict[str, Callable[[], asyncio.AbstractEventLoop]]:
+        """Run async tests on the loop aiperf runs on Windows.
+
+        pytest never goes through aiperf's entrypoints, so without this hook
+        Windows tests get the default ProactorEventLoop (no ``add_reader``,
+        which the ZMQ FD driver needs) and, on Python < 3.13, the 15.625 ms
+        clock. Defined only on Windows: elsewhere aiperf keeps the platform
+        default, and so do the tests.
+        """
+        policy = aiperf_event_loop_policy()
+        assert policy is not None
+        return {"aiperf": policy.new_event_loop}

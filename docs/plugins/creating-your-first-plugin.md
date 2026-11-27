@@ -234,7 +234,7 @@ You should see both packages listed in the same environment:
 
 ```text
 Name: aiperf
-Version: 0.13.0
+Version: 0.14.0
 Location: ...
 Requires: ...
 Required-by: my-aiperf-plugins

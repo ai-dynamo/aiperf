@@ -114,13 +114,17 @@ def _print_benchmark_findings(findings: list[Any]) -> None:
     if not findings:
         return
 
+    from rich.markup import escape
+
     from aiperf.kubernetes.console import print_header, print_info, print_warning
 
     print_header("Benchmark Diagnostics", style="bold yellow")
+    # status.error starts with "[dataset-manager pod]", which Rich would read
+    # as a markup tag and drop.
     for f in findings:
-        print_warning(f"{f.title}: {f.detail}")
-        print_info(f"  Impact: {f.impact}")
-        print_info(f"  Suggestion: {f.suggested_fix}")
+        print_warning(escape(f"{f.title}: {f.detail}"))
+        print_info(escape(f"  Impact: {f.impact}"))
+        print_info(escape(f"  Suggestion: {f.suggested_fix}"))
 
 
 def _print_events(events: list[dict[str, Any]], *, verbose: bool) -> None:

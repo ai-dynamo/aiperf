@@ -77,6 +77,12 @@ A structured representation of all input datasets converted to the payload forma
 
 The JSONL output contains one record per line, for each request sent during the benchmark. Each record includes request metadata, computed metrics, and error information if the request failed.
 
+Finite agentic replay adds `metadata.response_body_eof_ns` on successful HTTP
+records. It is the exact client response-body EOF in the corrected controller
+clock frame. `metadata.request_end_ns` keeps its existing last-response
+semantics. At raw export level, `response_body_eof_perf_ns` can be compared
+directly with the raw record's `start_perf_ns` on the same worker.
+
 #### Successful Request Record
 
 ```json
@@ -185,6 +191,7 @@ AIPerf output files can be parsed using the native Pydantic models for type-safe
 
 ### Synchronous Loading
 ```python
+from pathlib import Path
 from aiperf.common.models import MetricRecordInfo
 
 def load_records(file_path: Path) -> list[MetricRecordInfo]:
@@ -203,6 +210,7 @@ def load_records(file_path: Path) -> list[MetricRecordInfo]:
 For large benchmark runs with thousands of requests, use async file I/O for better performance:
 
 ```python
+from pathlib import Path
 import aiofiles
 from aiperf.common.models import MetricRecordInfo
 

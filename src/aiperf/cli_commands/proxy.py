@@ -117,6 +117,10 @@ def proxy(
     _Advanced use only — this command is invoked by the AIPerf Kubernetes
     sidecar pattern and is not intended for direct human use._
     """
+    from aiperf.common.endpoint_credentials import drop_injected_dataset_urls
+
+    drop_injected_dataset_urls()
+
     from aiperf.cli_utils import exit_on_error
 
     with exit_on_error(title=f"Error Running AIPerf Proxy ({kind})"):

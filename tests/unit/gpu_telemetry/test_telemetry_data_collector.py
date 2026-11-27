@@ -68,6 +68,18 @@ class TestPrometheusMetricParsing:
     using the new prometheus_client parser.
     """
 
+    def test_record_source_url_carries_no_credentials(self, sample_dcgm_data):
+        """The source URL keys the exported records, so credentials in the
+        configured endpoint must not travel with it."""
+        collector = DCGMTelemetryCollector("http://ops:s3cr3t@node-a:9401/metrics")
+
+        records = collector._parse_metrics_to_records(sample_dcgm_data)
+
+        assert records
+        assert records[0].telemetry_source_url == (
+            "http://<redacted>@node-a:9401/metrics"
+        )
+
     def test_complete_parsing_single_gpu(self, sample_dcgm_data):
         """Test parsing complete DCGM response into TelemetryRecord for one GPU.
 

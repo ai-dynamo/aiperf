@@ -2,7 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for endpoint credential consumption and rehydration."""
 
+from pathlib import Path
+
 import pytest
+from pytest import param
 
 from aiperf.common.endpoint_credentials import (
     AIPERF_INJECTED_API_KEY,
@@ -11,6 +14,9 @@ from aiperf.common.endpoint_credentials import (
     EndpointCredentialInjection,
     apply_endpoint_credentials,
     consume_endpoint_credentials,
+    redact_sweep_public_data,
+    validate_kubernetes_credential_transport,
+    validate_kubernetes_sweep_credential_axes,
 )
 from aiperf.common.redact import REDACTED_VALUE
 from aiperf.config import BenchmarkConfig
@@ -161,6 +167,51 @@ class TestApplyEndpointCredentials:
         apply_endpoint_credentials(run, credentials, require_resolved=True)
 
         assert run.cfg.endpoint.api_key is None
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        param("server_metrics.headers", id="mapping"),
+        param("benchmark.serverMetrics.headers.X-Proxy", id="aliased-entry"),
+    ],
+)  # fmt: skip
+def test_metrics_headers_are_protected_in_sweep_axes(path: str) -> None:
+    sweep = {"parameters": {path: ["synthetic-metrics-value"]}}
+
+    with pytest.raises(ValueError, match="cannot vary credential-bearing values"):
+        validate_kubernetes_sweep_credential_axes(sweep)
+
+    assert redact_sweep_public_data(sweep) == {
+        "parameters": {path: REDACTED_VALUE},
+    }
+
+
+def test_kubernetes_metrics_headers_require_their_own_secret(tmp_path: Path) -> None:
+    run = _benchmark_run(tmp_path, None)
+    run.cfg.server_metrics.headers["Authorization"] = "Bearer synthetic-metrics-value"
+
+    with pytest.raises(ValueError, match=AIPERF_INJECTED_SERVER_METRICS_HEADERS):
+        validate_kubernetes_credential_transport(
+            run.cfg.endpoint,
+            [{"name": AIPERF_INJECTED_SERVER_METRICS_HEADERS, "value": "literal"}],
+            datasets=run.cfg.datasets,
+            server_metrics=run.cfg.server_metrics,
+        )
+
+    validate_kubernetes_credential_transport(
+        run.cfg.endpoint,
+        [
+            {
+                "name": AIPERF_INJECTED_SERVER_METRICS_HEADERS,
+                "valueFrom": {
+                    "secretKeyRef": {"name": "metrics-headers", "key": "headers"}
+                },
+            }
+        ],
+        datasets=run.cfg.datasets,
+        server_metrics=run.cfg.server_metrics,
+    )
 
 
 def test_ambient_shell_key_does_not_reach_an_unconfigured_endpoint(

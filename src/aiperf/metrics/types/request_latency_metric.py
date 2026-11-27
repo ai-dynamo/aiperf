@@ -33,14 +33,14 @@ class RequestLatencyMetric(BaseRecordMetric[int]):
         """
         This method extracts the request and last response timestamps, and calculates the differences in time.
 
-        Note: Uses the last content response (with actual data), not usage-only chunks.
+        Note: Uses the last qualifying content response, not usage-only chunks.
         """
         request_ts: int = record.start_perf_ns
 
-        # Use content_responses to get last response with actual content
+        # Use content_responses to get the last qualifying content response.
         if not record.content_responses:
             raise NoMetricValue(
-                "Request latency requires at least 1 non-empty content response."
+                "Request latency requires at least 1 qualifying content response."
             )
         final_response_ts = record.content_responses[-1].perf_ns
 

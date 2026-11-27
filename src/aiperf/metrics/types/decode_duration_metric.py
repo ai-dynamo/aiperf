@@ -63,7 +63,7 @@ class FullDecodeDurationMetric(BaseRecordMetric[int]):
     ) -> int:
         if not record.content_responses:
             raise NoMetricValue(
-                "Full decode duration requires at least 1 non-empty content response."
+                "Full decode duration requires at least 1 qualifying content response."
             )
         if record.request.end_perf_ns is None:
             raise NoMetricValue(

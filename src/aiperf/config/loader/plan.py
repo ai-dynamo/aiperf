@@ -113,6 +113,7 @@ def _assemble_plan_from_aiperf_config(
         set_consistent_seed=config.multi_run.set_consistent_seed,
         disable_warmup_after_first=config.multi_run.disable_warmup_after_first,
         no_sweep_table=config.no_sweep_table,
+        export_level=config.benchmark.artifacts.export_level,
         multi_run=config.multi_run,
         sweep=config.sweep,
         failure_policy=None,

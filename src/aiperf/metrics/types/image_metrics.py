@@ -47,7 +47,7 @@ class ImageThroughputMetric(BaseRecordMetric[float]):
     short_header = "Image Throughput"
     display_order = 860
     unit = MetricOverTimeUnit.IMAGES_PER_SECOND
-    flags = MetricFlags.SUPPORTS_IMAGE_ONLY
+    flags = MetricFlags.SUPPORTS_IMAGE_ONLY | MetricFlags.LARGER_IS_BETTER
     required_metrics = {
         NumImagesMetric.tag,
         RequestLatencyMetric.tag,

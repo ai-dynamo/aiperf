@@ -23,7 +23,7 @@ class GoodputMetric(BaseDerivedMetric[float]):
     short_header_hide_unit = True
     unit = MetricOverTimeUnit.REQUESTS_PER_SECOND
     display_order = 1000
-    flags = MetricFlags.GOODPUT
+    flags = MetricFlags.GOODPUT | MetricFlags.LARGER_IS_BETTER
     required_metrics = {GoodRequestCountMetric.tag, BenchmarkDurationMetric.tag}
 
     def _derive_value(self, metric_results: MetricResultsDict) -> float:

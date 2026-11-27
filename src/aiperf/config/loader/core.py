@@ -10,10 +10,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
+from pydantic import ValidationError
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.config.loader.env_vars import substitute_env_vars
-from aiperf.config.loader.errors import ConfigurationError
+from aiperf.config.loader.errors import (
+    ConfigurationError,
+    describe_validation_error,
+)
 from aiperf.config.loader.jinja import (
     build_template_context,
     render_jinja2_templates,
@@ -443,8 +447,11 @@ def _validate_config_dict(
         if isinstance(e, ConfigurationError):
             raise
         if file_path:
+            detail = (
+                describe_validation_error(e) if isinstance(e, ValidationError) else e
+            )
             raise ConfigurationError(
-                f"Configuration validation failed: {e}",
+                f"Configuration validation failed: {detail}",
                 file_path=file_path,
             ) from e
         raise
@@ -714,8 +721,6 @@ def _validate_sweep_expansion(config: AIPerfConfig, file_path: Path | str) -> No
     ``ConfigurationError`` so the CLI's uniform "Error: <msg>" handler fires
     instead of a bare traceback.
     """
-    from pydantic import ValidationError
-
     from aiperf.config.loader.plan import build_benchmark_plan
 
     try:
@@ -723,8 +728,9 @@ def _validate_sweep_expansion(config: AIPerfConfig, file_path: Path | str) -> No
     except ConfigurationError:
         raise
     except (ValidationError, ValueError, TypeError) as e:
+        detail = describe_validation_error(e) if isinstance(e, ValidationError) else e
         raise ConfigurationError(
-            f"Sweep expansion failed during validation: {e}",
+            f"Sweep expansion failed during validation: {detail}",
             file_path=file_path,
         ) from e
 

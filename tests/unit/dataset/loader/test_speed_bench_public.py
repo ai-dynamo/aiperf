@@ -19,7 +19,8 @@ from aiperf.dataset.loader.speed_bench_public import (
     SpeedBenchPublicLoader,
     validate_config_name,
 )
-from aiperf.plugin.enums import DatasetSamplingStrategy
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import DatasetSamplingStrategy, PluginType
 from tests.unit.conftest import make_run_from_cli
 
 PLACEHOLDER = SpeedBenchRow.TURNS_PLACEHOLDER
@@ -609,47 +610,34 @@ class TestResolverStateIsolation:
             "datasets", reason="no Windows-on-ARM wheel; resolution is unreachable"
         )
 
-    def test_rng_is_reseeded_per_config(self) -> None:
-        """Upstream seeds HLE_RNG once at import and consumes it building
-        throughput prompts, so a second config resolved in the same process
-        would continue from the first one's stream and produce prompts that
-        differ from a fresh process."""
-        import numpy as np
+    def test_resolution_does_not_reuse_source_cache(self, monkeypatch) -> None:
+        from datasets import Dataset
 
         from aiperf.dataset.loader.vendor import speed_bench_prepare
 
-        SpeedBenchPublicLoader._reset_resolver_state(speed_bench_prepare)
-        first = [int(speed_bench_prepare.HLE_RNG.integers(0, 10_000)) for _ in range(5)]
-
-        # Simulate a prior config having drawn from the shared generator.
-        for _ in range(17):
-            speed_bench_prepare.HLE_RNG.integers(0, 10_000)
-
-        SpeedBenchPublicLoader._reset_resolver_state(speed_bench_prepare)
-        second = [
-            int(speed_bench_prepare.HLE_RNG.integers(0, 10_000)) for _ in range(5)
-        ]
-
-        assert first == second
-        assert isinstance(speed_bench_prepare.HLE_RNG, np.random.Generator)
-
-    def test_resolve_config_reseeds_before_resolving(
-        self, monkeypatch, tmp_path
-    ) -> None:
-        """The helper is useless unless resolve_config actually calls it."""
-        rows = [{"question_id": "a" * 32, "category": "qa", "turns": ["A prompt."]}]
-        TestResolveConfig()._patched_resolve(monkeypatch, tmp_path, rows)
-
-        calls: list[bool] = []
-        monkeypatch.setattr(
-            SpeedBenchPublicLoader,
-            "_reset_resolver_state",
-            staticmethod(lambda mod: calls.append(True)),
+        source = "abisee/cnn_dailymail"
+        articles = iter(["First article", "Updated article"])
+        monkeypatch.setitem(
+            speed_bench_prepare.DATASETS_AND_LOADERS_FUNCTIONS,
+            source,
+            lambda *_: Dataset.from_list(
+                [{"id": "article", "article": next(articles)}]
+            ),
         )
+        dataset = Dataset.from_list(
+            [
+                {
+                    "source": source,
+                    "src_id": "article",
+                    "turns": [f"{PLACEHOLDER}\n\nSummarize: {{article}}"],
+                }
+            ]
+        )
+        first = speed_bench_prepare._resolve_external_data(dataset, "qualitative")
+        second = speed_bench_prepare._resolve_external_data(dataset, "qualitative")
 
-        SpeedBenchPublicLoader.resolve_config("qualitative")
-
-        assert calls, "resolve_config did not re-seed the vendored resolver"
+        assert first[0]["turns"] == ["Summarize: First article"]
+        assert second[0]["turns"] == ["Summarize: Updated article"]
 
 
 class TestSessionIdFallback:
@@ -917,6 +905,7 @@ class TestAllowlistMatchesThePublishedDataset:
         "throughput_8k",
         "throughput_16k",
         "throughput_32k",
+        "throughput_100k",
     )
 
     def test_allowlist_covers_every_published_source_host(
@@ -1025,6 +1014,8 @@ class TestRegisteredEntriesMatchThePublishedDataset:
     def _expected(self, hf_subset: str, category: str | None) -> int:
         if hf_subset == "qualitative":
             return 880 if category is None else 80
+        if hf_subset == "throughput_100k":
+            return 384 if category is None else 128
         return 1536 if category is None else 512
 
     def test_every_entry_yields_its_documented_row_count(
@@ -1130,3 +1121,36 @@ class TestCategoryTagging:
         )
 
         assert {t.source_kind for c in conversations for t in c.turns} == {"coding"}
+
+
+@pytest.mark.parametrize(
+    "tier",
+    [param(None, id="aggregate"), param("low_entropy", id="low"), param("mixed", id="mixed"), param("high_entropy", id="high")],
+)  # fmt: skip
+@pytest.mark.asyncio
+async def test_throughput_100k_public_selectors_filter_and_tag(
+    tier: str | None,
+) -> None:
+    name = "speed_bench_throughput_100k" + (f"_{tier}" if tier else "")
+    cli = CLIConfig(model_names=["test-model"], public_dataset=name)
+    metadata = plugins.get_public_dataset_loader_metadata(cli.public_dataset)
+    loader_cls = plugins.get_class(PluginType.PUBLIC_DATASET_LOADER, name)
+    loader = loader_cls(
+        run=_make_run(),
+        hf_subset=metadata.hf_subset,
+        category=metadata.category,
+        multi_turn=metadata.multi_turn,
+    )
+    assert loader.config == "throughput_100k"
+    assert metadata.full_pass_by_default
+    tiers = ["low_entropy", "mixed", "high_entropy"]
+    data = {
+        "dataset": [
+            _row(str(i) * 32, category, "Prompt") for i, category in enumerate(tiers)
+        ]
+    }
+    conversations = await loader.convert_to_conversations(data)
+
+    assert [c.turns[0].source_kind for c in conversations] == (
+        [tier] if tier else tiers
+    )

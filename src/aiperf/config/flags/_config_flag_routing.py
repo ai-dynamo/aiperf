@@ -114,6 +114,7 @@ _ROUTED_OUTSIDE_SECTIONS: frozenset[str] = frozenset(
         "wandb_run_name",
         "wandb_tags",
         # agentic phase fields, via _apply_agentic_replay_fields
+        "agentic_replay_lifecycle",
         "agentic_cache_warmup_duration",
         "agentic_warmup_grace_period",
         "warmup_requests_per_lane",
@@ -143,6 +144,9 @@ _ROUTED_OUTSIDE_SECTIONS: frozenset[str] = frozenset(
         # _VERBATIM_DATASET_FIELDS (added on main by #1268)
         "system_prompt",
         "system_prompt_file",
+        # truncation handling, carried onto every dataset variant by
+        # _VERBATIM_DATASET_FIELDS
+        "end_conversation_on_truncation",
         # baseten_trace dataset knobs carried by _VERBATIM_DATASET_FIELDS;
         # against another format they raise rather than drop
         "force_min_tokens",
@@ -189,6 +193,7 @@ DATASET_SOURCE_FIELDS: frozenset[str] = frozenset(
         # of keys the user wrote in the config file.
         "public_dataset",
         "hf_weka_dataset",
+        "hf_mooncake_dataset",
     }
 )
 
@@ -230,6 +235,7 @@ _INPUT_NOT_ON_DATASET: frozenset[str] = frozenset(
 # keying that check on INPUT_FIELDS alone let them no-op silently.
 DATASET_FIELDS_OUTSIDE_INPUT: frozenset[str] = frozenset(
     {
+        "end_conversation_on_truncation",
         "force_min_tokens",
         "inter_turn_delay_cap_seconds",
         "max_idle_gap_cap_seconds",
@@ -301,7 +307,7 @@ def _build_routed_under_config() -> frozenset[str]:
     # pair, and the AGENTIC_REPLAY fields shared with BasePhaseConfig.
     loadgen = (
         {attr for attr, _ in _LOADGEN_PHASE_FIELD_MAP}
-        | {"request_rate_series", "arrival_pattern"}
+        | {"request_rate_series", "arrival_pattern", "continuation_dispatch"}
         | (set(_AGENTIC_REPLAY_ROUTES) & LOADGEN_FIELDS)
         # Phase shaping, applied by _apply_phase_shaping_overrides through the
         # converter's own helpers. Derived from the same tables those helpers

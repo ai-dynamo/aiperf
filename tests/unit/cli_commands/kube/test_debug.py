@@ -14,6 +14,7 @@ Focuses on:
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1084,3 +1085,23 @@ class TestDebugCommand:
 
             selector = mock_get_pods.call_args[0][2]
             assert "job-id" in selector
+
+
+@pytest.mark.asyncio
+async def test_benchmark_findings_failed_job_lists_failure_first() -> None:
+    from aiperf.cli_commands.kube.debug import _benchmark_findings
+
+    status = {
+        "phase": "Failed",
+        "error": "Controller container terminated before results were recoverable: x",
+        "conditions": [
+            {"type": "DatasetReady", "status": "False", "reason": "DatasetUnavailable", "message": "x"}
+        ],
+    }  # fmt: skip
+    job_info = SimpleNamespace(name="job", namespace="ns", start_time=None)
+    with patch(
+        "aiperf.kubernetes.client.get_raw_aiperfjob_status",
+        AsyncMock(return_value=status),
+    ):
+        findings = await _benchmark_findings(MagicMock(), job_info)
+    assert [f.id for f in findings][:2] == ["job_error", "dataset_unavailable"]

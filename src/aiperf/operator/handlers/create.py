@@ -204,7 +204,8 @@ def _build_deployment(
     validate_kubernetes_credential_transport(
         run.cfg.endpoint,
         deploy_config.pod_template.env,
-        run.cfg.server_metrics,
+        datasets=run.cfg.datasets,
+        server_metrics=run.cfg.server_metrics,
     )
 
     deployment = KubernetesDeployment(

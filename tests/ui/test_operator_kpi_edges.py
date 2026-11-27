@@ -11,6 +11,7 @@ KPI_CARD = REPO / "src" / "aiperf" / "operator" / "ui" / "components" / "kpi-car
 REALTIME_GRID = (
     REPO / "src" / "aiperf" / "operator" / "ui" / "components" / "realtime-kpi-grid.js"
 )
+JOB_DETAIL = REPO / "src" / "aiperf" / "operator" / "ui" / "pages" / "job-detail.js"
 
 
 def _source(path: Path) -> str:
@@ -64,6 +65,21 @@ def test_realtime_grid_slo_coloring_uses_metric_direction() -> None:
     assert "value <= threshold" in slo_status
     assert "'output_token_throughput'" in source
     assert "'request_throughput'" in source
+
+
+def _larger_is_better_slo_tags(path: Path) -> set[str]:
+    match = re.search(
+        r"const LARGER_IS_BETTER_SLO_TAGS = new Set\(\[([\s\S]*?)\]\);", _source(path)
+    )
+    assert match is not None
+    return set(re.findall(r"'([^']+)'", match.group(1)))
+
+
+def test_slo_direction_sets_agree_and_include_image_throughput() -> None:
+    job_detail = _larger_is_better_slo_tags(JOB_DETAIL)
+
+    assert job_detail == _larger_is_better_slo_tags(REALTIME_GRID)
+    assert "image_throughput" in job_detail
 
 
 def test_realtime_grid_sparkline_matches_displayed_stat_and_filters_bad_samples() -> (

@@ -220,6 +220,11 @@ spec:
                         description: Enable streaming (Server-Sent Events) responses. Required for accurate TTFT (time to
                           first token) measurement. Server must support streaming for this to work.
                         default: false
+                      allowEmptyContent:
+                        type: boolean
+                        description: Retain explicitly empty content or reasoning strings as timed responses for streaming
+                          OpenAI Chat Completions. This changes the shared response timeline without adding output tokens.
+                        default: false
                       transport:
                         type: string
                         enum:
@@ -404,6 +409,20 @@ spec:
                       serverProfiler:
                         type: object
                         properties:
+                          urls:
+                            type: array
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 2083
+                              format: uri
+                            minItems: 1
+                            description: Profiler control server URLs. When unset, uses the inference endpoint origins. Paths
+                              and queries are ignored.
+                          startBody:
+                            type: object
+                            description: JSON object sent with profiler start requests. When unset, sends an empty body.
+                            x-kubernetes-preserve-unknown-fields: true
                           timeoutSeconds:
                             type: number
                             description: Timeout in seconds for profiler start/stop POSTs. When unset, uses 30.0s.

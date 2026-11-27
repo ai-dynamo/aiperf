@@ -83,7 +83,9 @@ class ImageGenerator(BaseGenerator):
         supported_extensions = {ext.lower() for ext in Image.registered_extensions()}
         image_paths = [
             Path(path)
-            for path in sorted(glob.glob(str(source_path / "*")))
+            for path in sorted(
+                glob.glob(str(Path(glob.escape(str(source_path))) / "*"))
+            )
             if Path(path).suffix.lower() in supported_extensions
         ]
         if not image_paths:

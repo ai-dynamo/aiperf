@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+from pathlib import Path
 
+import orjson
 import pytest
 from pydantic import ValidationError
 from pytest import param
@@ -16,8 +18,10 @@ from aiperf.dataset.loader.speed_bench import (
     SpeedBenchQualitativeLoader,
     SpeedBenchRow,
     SpeedBenchThroughput1KLoader,
+    SpeedBenchThroughput100KLoader,
 )
-from aiperf.plugin.enums import DatasetSamplingStrategy
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import DatasetSamplingStrategy, PluginType
 from tests.unit.conftest import make_run_from_cli
 
 
@@ -646,6 +650,8 @@ class TestSuggestedPublicDataset:
         [
             param(SpeedBenchQualitativeLoader, None, "speed_bench_qualitative", id="qualitative_no_category"),
             param(SpeedBenchQualitativeLoader, "coding", "speed_bench_coding", id="qualitative_category"),
+            param(SpeedBenchThroughput100KLoader, None, "speed_bench_throughput_100k", id="100k_aggregate"),
+            param(SpeedBenchThroughput100KLoader, "mixed", "speed_bench_throughput_100k_mixed", id="100k_tier"),
             param(SpeedBenchThroughput1KLoader, None, "speed_bench_throughput_1k", id="throughput_no_category"),
             param(SpeedBenchThroughput1KLoader, "low_entropy", "speed_bench_throughput_1k_low_entropy", id="throughput_category"),
             param(SpeedBenchThroughput1KLoader, "not_a_category", "speed_bench_throughput_1k", id="unknown_category_falls_back_to_split"),
@@ -663,3 +669,23 @@ class TestSuggestedPublicDataset:
 
         assert suggested == expected
         assert suggested in {member.value for member in PublicDatasetType}
+
+
+def test_throughput_100k_custom_loader_preserves_prompt(tmp_path: Path) -> None:
+    prompt = "Long context. " * 50_000
+    row = _make_speed_bench_row(
+        category="mixed", messages=[{"role": "user", "content": prompt}]
+    )
+    path = tmp_path / "throughput_100k.jsonl"
+    path.write_bytes(orjson.dumps(row) + b"\n")
+    loader_cls = plugins.get_class(
+        PluginType.CUSTOM_DATASET_LOADER, "speed_bench_throughput_100k"
+    )
+    assert loader_cls.can_load(row, path)
+    assert not loader_cls.can_load(row, "throughput_32k.jsonl")
+    loader = loader_cls(filename=str(path), run=_make_run())
+    conversations = loader.convert_to_conversations(loader.load_dataset())
+
+    assert len(conversations) == 1
+    assert conversations[0].turns[0].texts[0].contents[0] == prompt
+    assert conversations[0].turns[0].source_kind == "mixed"

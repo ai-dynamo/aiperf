@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 from abc import abstractmethod
 from collections.abc import Iterator
@@ -11,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation, Text, Turn
+from aiperf.common.record_files import ParquetReadError, is_parquet_input, parquet_files
 from aiperf.config.dataset.defaults import InputTokensDefaults
 from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader._delay_cap import DelayCapTracker
@@ -29,21 +31,30 @@ if TYPE_CHECKING:
 TraceT = TypeVar("TraceT")
 
 
-def _compute_file_hash(filepath: str) -> str:
+def _compute_file_hash(filepath: str | None) -> str:
     """Compute SHA256 hash of file content (first 16 hex chars).
 
-    Falls back to hashing the filepath string if the file cannot be read.
-    Used as the per-file ``trace_id`` scope for ``HashIdRandomGenerator`` so
-    that two different trace files with overlapping ``hash_id`` values
-    produce different content.
+    A directory of parquet shards hashes its shards' bytes in read order, so the
+    hash does not depend on where the directory lives. Falls back to hashing the
+    filepath string if the input cannot be read. Used as the per-file
+    ``trace_id`` scope for ``HashIdRandomGenerator`` so that two different trace
+    files with overlapping ``hash_id`` values produce different content.
     """
     try:
+        files = (
+            parquet_files(filepath)
+            if filepath is not None
+            and Path(filepath).is_dir()
+            and is_parquet_input(filepath)
+            else [filepath]
+        )
         hasher = hashlib.sha256()
-        with open(filepath, "rb") as f:
-            for chunk in iter(lambda: f.read(65536), b""):
-                hasher.update(chunk)
+        for file in files:
+            with open(file, "rb") as f:
+                for chunk in iter(functools.partial(f.read, 65536), b""):
+                    hasher.update(chunk)
         return hasher.hexdigest()[:16]
-    except (OSError, TypeError):
+    except (OSError, TypeError, ParquetReadError):
         return hashlib.sha256(str(filepath).encode()).hexdigest()[:16]
 
 
@@ -82,6 +93,8 @@ class BaseTraceDatasetLoader(
     - `_synthesis_exclude_fields`: fields to strip before synthesis
     - `_reconstruct_traces`: rebuild typed traces from synthesized dicts
     """
+
+    reads_parquet = True
 
     def __init__(
         self,

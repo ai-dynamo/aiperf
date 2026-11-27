@@ -451,7 +451,8 @@ class KubeOptions(KubeManageOptions):
         validate_kubernetes_credential_transport(
             config.benchmark.endpoint,
             dc.pod_template.env,
-            config.benchmark.server_metrics,
+            datasets=config.benchmark.datasets,
+            server_metrics=config.benchmark.server_metrics,
         )
         dc_dict = dc.model_dump(
             mode="json", by_alias=True, exclude_unset=True, exclude_none=True

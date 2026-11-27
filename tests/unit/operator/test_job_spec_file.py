@@ -57,3 +57,33 @@ async def test_save_job_spec_file_redacts_public_endpoint_credentials(
         f"https://{REDACTED_VALUE}@host/v1?token={REDACTED_VALUE}&model=m"
     ]
     assert spec["benchmark"]["endpoint"]["apiKey"] == "public-secret"
+
+
+@pytest.mark.asyncio
+async def test_save_job_spec_file_redacts_presigned_dataset_path(
+    tmp_path: Path,
+) -> None:
+    spec = {
+        "benchmark": {
+            "datasets": [
+                {
+                    "name": "main",
+                    "path": {
+                        "ref": "https://h/t.jsonl?X-Amz-Signature=topsecret",
+                        "resolved_version": "etag:1",
+                    },
+                }
+            ]
+        }
+    }
+    with patch("aiperf.operator.job_spec_file.OperatorEnvironment") as env:
+        env.RESULTS.DIR = tmp_path
+        await save_job_spec_file("ns", "job-1", spec, epoch="100")
+
+    saved = (tmp_path / "ns" / "job-1" / "100" / "job_spec.json").read_bytes()
+    assert b"topsecret" not in saved
+    path = orjson.loads(saved)["benchmark"]["datasets"][0]["path"]
+    assert path == {
+        "ref": f"https://h/t.jsonl?X-Amz-Signature={REDACTED_VALUE}",
+        "resolved_version": "etag:1",
+    }

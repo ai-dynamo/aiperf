@@ -1,0 +1,124 @@
+{
+  "id": "finite_root_02",
+  "models": [
+    "fixture-model"
+  ],
+  "block_size": 64,
+  "hash_id_scope": "local",
+  "requests": [
+    {
+      "t": 0.0,
+      "type": "n",
+      "model": "fixture-model",
+      "in": 150,
+      "out": 18,
+      "hash_ids": [
+        2000,
+        2001
+      ],
+      "input_types": [
+        "text"
+      ],
+      "output_types": [
+        "text"
+      ],
+      "stop": "tool_use",
+      "api_time": 0.4,
+      "think_time": 0.2
+    },
+    {
+      "t": 0.7,
+      "type": "subagent",
+      "agent_id": "agent_001",
+      "subagent_type": "Explore",
+      "duration_ms": 600,
+      "total_tokens": 104,
+      "tool_use_count": 1,
+      "status": "completed",
+      "requests": [
+        {
+          "t": 0.8,
+          "type": "n",
+          "model": "fixture-model",
+          "in": 90,
+          "out": 14,
+          "hash_ids": [
+            2100,
+            2101
+          ],
+          "input_types": [
+            "text"
+          ],
+          "output_types": [
+            "text"
+          ],
+          "stop": "end_turn",
+          "api_time": 0.4,
+          "think_time": 0.0
+        }
+      ],
+      "models": [
+        "fixture-model"
+      ],
+      "tool_tokens": 16,
+      "system_tokens": 8
+    },
+    {
+      "t": 1.6,
+      "type": "subagent",
+      "agent_id": "agent_002",
+      "subagent_type": "Plan",
+      "duration_ms": 599,
+      "total_tokens": 115,
+      "tool_use_count": 1,
+      "status": "completed",
+      "requests": [
+        {
+          "t": 1.7,
+          "type": "n",
+          "model": "fixture-model",
+          "in": 100,
+          "out": 15,
+          "hash_ids": [
+            2200,
+            2201
+          ],
+          "input_types": [
+            "text"
+          ],
+          "output_types": [
+            "text"
+          ],
+          "stop": "end_turn",
+          "api_time": 0.4,
+          "think_time": 0.0
+        }
+      ],
+      "models": [
+        "fixture-model"
+      ],
+      "tool_tokens": 16,
+      "system_tokens": 8
+    },
+    {
+      "t": 3.0,
+      "type": "n",
+      "model": "fixture-model",
+      "in": 220,
+      "out": 24,
+      "hash_ids": [
+        2002,
+        2003
+      ],
+      "input_types": [
+        "text"
+      ],
+      "output_types": [
+        "text"
+      ],
+      "stop": "end_turn",
+      "api_time": 0.4,
+      "think_time": 0.2
+    }
+  ]
+}

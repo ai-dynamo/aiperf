@@ -3,16 +3,20 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from aiperf.common.enums import ExportLevel
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
+from aiperf.common.hooks import on_start, on_stop
 from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.mixins import BufferedJSONLWriterMixin
 from aiperf.common.models.record_models import MetricRecordInfo, MetricResult
+from aiperf.common.results_markers import CHECKPOINTS_DIR_NAME
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.metric_registry import MetricRegistry
+from aiperf.plugin.enums import ServiceRunType
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 if TYPE_CHECKING:
@@ -27,6 +31,8 @@ class RecordExportJSONLWriter(
     Registered as a ``stream_exporter``: writes each record to the on-disk
     JSONL sink as it arrives, with no end-of-run aggregation. Self-disables
     when ``artifacts.export_level`` is not ``RECORDS`` or ``RAW``.
+    Kubernetes runs also expose the flushed records through ``checkpoints/``
+    so recovery can retrieve them before final export commits.
     """
 
     def __init__(
@@ -43,6 +49,8 @@ class RecordExportJSONLWriter(
 
         output_file = run.cfg.artifacts.profile_export_jsonl_file
         output_file.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint = output_file.parent / CHECKPOINTS_DIR_NAME / output_file.name
+        checkpoint.unlink(missing_ok=True)
         output_file.unlink(missing_ok=True)
 
         super().__init__(
@@ -62,6 +70,45 @@ class RecordExportJSONLWriter(
         self.info(f"Record metrics export enabled: {self.output_file}")
         if self.export_http_trace:
             self.info("HTTP trace export enabled (--export-http-trace)")
+
+    @on_start
+    async def _expose_request_checkpoint(self) -> None:
+        """Expose the live file without copying it or buffering another record stream."""
+        if (
+            self.run.cfg.runtime.service_run_type != ServiceRunType.KUBERNETES
+            or Environment.RECORD.CHECKPOINT_INTERVAL <= 0
+        ):
+            return
+        try:
+            await asyncio.to_thread(self._link_request_checkpoint)
+        except OSError as exc:
+            self.warning(f"Failed to expose per-request checkpoint: {exc!r}")
+
+    def _link_request_checkpoint(self) -> None:
+        """Replace a previous run's checkpoint after the new output file opens."""
+        checkpoint = (
+            self.output_file.parent / CHECKPOINTS_DIR_NAME / self.output_file.name
+        )
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint.unlink(missing_ok=True)
+        checkpoint.hardlink_to(self.output_file)
+
+    @on_stop
+    async def _remove_empty_request_checkpoint(self) -> None:
+        """Match the JSONL writer's cleanup when no request records were exported."""
+        if (
+            self.lines_written
+            or self.run.cfg.runtime.service_run_type != ServiceRunType.KUBERNETES
+            or Environment.RECORD.CHECKPOINT_INTERVAL <= 0
+        ):
+            return
+        checkpoint = (
+            self.output_file.parent / CHECKPOINTS_DIR_NAME / self.output_file.name
+        )
+        try:
+            await asyncio.to_thread(checkpoint.unlink, missing_ok=True)
+        except OSError as exc:
+            self.warning(f"Failed to remove empty per-request checkpoint: {exc!r}")
 
     async def process_record(self, record_data: MetricRecordsData) -> None:
         try:

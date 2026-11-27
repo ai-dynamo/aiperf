@@ -44,7 +44,6 @@ from aiperf.common.hooks import on_command, on_init, on_message, on_start, on_st
 from aiperf.common.logging import cleanup_global_log_queue, get_global_log_queue
 from aiperf.common.messages import (
     BaseServiceErrorMessage,
-    BenchmarkCompleteMessage,
     ProcessAccuracyResultMessage,
     ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
@@ -64,6 +63,7 @@ from aiperf.common.models.error_models import ExitErrorInfo
 from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.results_markers import (
+    remove_committed_request_checkpoint,
     write_processing_marker,
     write_ready_marker,
 )
@@ -71,6 +71,7 @@ from aiperf.common.service_registry import ServiceRegistry
 from aiperf.common.types import ServiceTypeT
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.comm import ZMQDualBindConfig
+from aiperf.config.dataset.truncation import end_conversation_on_truncation_enabled
 from aiperf.controller.controller_utils import print_exit_errors
 from aiperf.controller.protocols import (
     KubernetesServiceManagerProtocol,
@@ -91,6 +92,7 @@ from aiperf.exporters.exporter_manager import ExporterFailure, ExporterManager
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType, ServiceType, UIType
 from aiperf.records.records_manager import ERROR_FATAL_DETAIL_KEY
+from aiperf.server_metrics.constants import SERVER_METRICS_COLLECTION_STOPPED
 from aiperf.ui.protocols import AIPerfUIProtocol
 from aiperf.zmq.streaming_router_client import PEER_GONE_ERRNOS
 
@@ -167,6 +169,8 @@ class SystemController(
         # EOS may cause server to stop early, producing misleading OSL results
         if self._should_warn_osl_without_ignore_eos():
             warn_osl_without_ignore_eos()
+
+        self._log_end_conversation_on_truncation()
 
         if self._should_warn_accuracy_temperature():
             warn_accuracy_temperature()
@@ -263,6 +267,8 @@ class SystemController(
         # because command fan-out targets must exclude them even after the
         # barrier has released.
         self._reaped_service_ids: set[str] = set()
+        self._service_instance_ids: dict[str, str] = {}
+        self._retired_result_producer_ids: set[str] = set()
         # A producer that dies abruptly never sends SERVICE_ERROR, so the
         # heartbeat/pod reapers are the only signal. Without this hook they mark
         # the service failed in the registry but leave it in the barrier, and
@@ -408,8 +414,14 @@ class SystemController(
         )
 
     def _should_warn_osl_without_ignore_eos(self) -> bool:
-        """Check if --osl is used without ignore_eos or min_tokens in extra inputs."""
+        """Check if --osl is used without ignore_eos or min_tokens in extra inputs.
+
+        Suppressed when end_conversation_on_truncation is on: ignore_eos would
+        truncate every turn and end every conversation after its first turn.
+        """
         dataset = self.run.cfg.get_default_dataset()
+        if end_conversation_on_truncation_enabled(dataset):
+            return False
         prompts = getattr(dataset, "prompts", None)
         osl = getattr(prompts, "osl", None) if prompts else None
         if osl is None:
@@ -422,6 +434,34 @@ class SystemController(
         # Check if ignore_eos or min_tokens is set with a truthy value
         extra_dict = dict(extra_inputs)
         return not (extra_dict.get("ignore_eos") or extra_dict.get("min_tokens"))
+
+    def _log_end_conversation_on_truncation(self) -> None:
+        """Report the resolved end_conversation_on_truncation setting once.
+
+        Warns when ignore_eos is also set: it runs every turn to the output-token
+        cap, so every multi-turn conversation would end after its first turn.
+        """
+        dataset = self.run.cfg.get_default_dataset()
+        if not end_conversation_on_truncation_enabled(dataset):
+            return
+        source = (
+            "explicitly set"
+            if dataset.end_conversation_on_truncation is not None
+            else "default for "
+            f"{getattr(dataset, 'dataset', None) or getattr(dataset, 'format', None)}"
+        )
+        self.info(
+            f"end_conversation_on_truncation enabled ({source}): a conversation "
+            "ends after any turn truncated by the output-token cap, and its "
+            "remaining turns are skipped"
+        )
+        if dict(self.run.cfg.endpoint.extra or {}).get("ignore_eos"):
+            self.warning(
+                "ignore_eos is set while end_conversation_on_truncation is "
+                "enabled: every turn will run to the output-token cap, so every "
+                "multi-turn conversation ends after its first turn. Drop ignore_eos "
+                "or pass --no-end-conversation-on-truncation."
+            )
 
     def _should_warn_accuracy_temperature(self) -> bool:
         """Check if accuracy mode is active without temperature=0 in extra inputs."""
@@ -901,7 +941,22 @@ class SystemController(
         )
         # A dead producer can no longer join its result domain; drop it from the
         # barrier so shutdown isn't blocked forever, then re-check readiness.
-        self._result_join_coordinator.unregister_service(message.service_id)
+        service_info = self.service_manager.service_id_map.get(message.service_id)
+        if (
+            service_info is not None
+            and service_info.service_type == ServiceType.SERVER_METRICS_MANAGER
+        ):
+            self._result_join_coordinator.evict_service(
+                message.service_id, "service error"
+            )
+            if (
+                message.service_id in self._result_join_coordinator.evicted
+                and message.service_id not in self._retired_result_producer_ids
+            ):
+                self._record_missing_server_metrics(message.error)
+            self._retired_result_producer_ids.add(message.service_id)
+        else:
+            self._result_join_coordinator.unregister_service(message.service_id)
         if self._is_required_service(message.service_id) and (
             self._system_state not in {SystemState.STOPPING, SystemState.SHUTDOWN}
         ):
@@ -1039,11 +1094,15 @@ class SystemController(
     def _is_required_service(self, service_id: str) -> bool:
         """Whether losing this service invalidates the run.
 
+        Reaped services retain their type in the registry after command-map
+        cleanup, so queued errors must still recognize optional collectors.
         Unknown senders count as required: an unidentifiable failure is more
         likely a control-plane service that died before or after its registry
         entry existed than an optional collector.
         """
-        info = self.service_manager.service_id_map.get(service_id)
+        info = self.service_manager.service_id_map.get(
+            service_id
+        ) or ServiceRegistry.get_service(service_id)
         if info is None:
             return True
         return info.service_type in self.required_services
@@ -1095,6 +1154,11 @@ class SystemController(
                         service_id=service_id,
                     )
                 )
+                if info.service_type == ServiceType.SERVER_METRICS_MANAGER:
+                    self._retired_result_producer_ids.add(service_id)
+                    self._record_missing_server_metrics(
+                        self._exit_errors[-1].error_details
+                    )
                 self._forget_reaped_service(service_id)
                 # A producer that is also a required service (RecordsManager)
                 # still owed results here, so barrier eviction alone must not
@@ -1664,6 +1728,9 @@ class SystemController(
         self, message: ProcessServerMetricsResultMessage
     ) -> None:
         """Handle a server metrics results message."""
+        if self._retired_result_producer_ids:
+            self.debug("Ignoring late server metrics from a retired producer")
+            return
         try:
             self.trace_or_debug(
                 lambda: f"Received server metrics results message: {message}",
@@ -1693,6 +1760,16 @@ class SystemController(
                 )
 
             self._server_metrics_results = server_metrics_results
+            if server_metrics_results is not None:
+                for error in server_metrics_results.error_summary:
+                    if error.error_details.type == SERVER_METRICS_COLLECTION_STOPPED:
+                        self._exit_errors.append(
+                            ExitErrorInfo(
+                                error_details=error.error_details,
+                                operation="server_metrics_collection",
+                                service_id=message.service_id,
+                            )
+                        )
             self._merge_server_metric_phase_results(server_metrics_results)
         except Exception as e:
             self.exception(f"Error processing server metrics results message: {e!r}")
@@ -2405,65 +2482,150 @@ class SystemController(
             )
         return has_exit_failure
 
-    async def _announce_benchmark_complete(self) -> None:
-        """Tell the API service the benchmark is over.
+    async def _announce_benchmark_complete(self, api_ids: set[str]) -> None:
+        """Hand the API the run's terminal state and wait for it to confirm.
 
-        The results endpoint reports "running" until this arrives, so without
-        the announcement a client polling ``/api/results`` never observes a
-        terminal status and keeps polling until the listener goes away.
+        The results endpoint reports "running" until this lands, and the API is
+        retired right after, so the controller waits for the reply instead of
+        publishing and hoping. A timeout or failed reply is logged and shutdown
+        proceeds anyway; ``COMPLETE_ACK_TIMEOUT`` bounds the wait.
+        """
+        if not self._api_enabled or not api_ids:
+            return
+        service_ids = sorted(api_ids)
+        payload = {
+            "was_cancelled": self._was_cancelled,
+            "results_settled": self._results_settled(),
+        }
+        responses = await self._send_control_command_to_all(
+            CommandType.BENCHMARK_COMPLETE,
+            service_ids,
+            payload=orjson.dumps(payload),
+            timeout=Environment.API_SERVER.COMPLETE_ACK_TIMEOUT,
+        )
+        for service_id, response in zip(service_ids, responses, strict=True):
+            self._log_benchmark_complete_reply(service_id, response)
+
+    def _results_settled(self) -> bool:
+        """Whether no further final-results message can reach the API.
+
+        Locally ``shutdown_all_services`` has joined RecordsManager before the
+        handshake, so whatever it published has already arrived. Under
+        Kubernetes it runs in a sibling container the controller does not wait
+        on, and its final results may still be in flight.
+        """
+        return not self._is_kubernetes()
+
+    def _log_benchmark_complete_reply(
+        self, service_id: str, response: CommandResponse | ErrorDetails
+    ) -> None:
+        """Warn when the API cannot serve a clean terminal status."""
+        if isinstance(response, CommandOk):
+            reply = orjson.loads(response.payload) if response.payload else {}
+            if not reply.get("has_final_results", False):
+                status = "cancelled" if self._was_cancelled else "incomplete"
+                when = (
+                    "now"
+                    if self._results_settled()
+                    else "once its wait for late final results lapses"
+                )
+                self.warning(
+                    f"API '{service_id}' holds the terminal state but not the final "
+                    f"results; /api/results will report '{status}' {when}"
+                )
+                return
+            self.info(f"API '{service_id}' confirmed the run's terminal state")
+            return
+        if isinstance(response, ErrorDetails):
+            detail = response.message
+        elif isinstance(response, CommandErr):
+            detail = response.error
+        else:
+            detail = type(response).__name__
+        self.warning(
+            f"API '{service_id}' did not confirm the terminal state ({detail}); "
+            "/api/results may still report 'running' when its listener closes"
+        )
+
+    async def _retire_api_service(
+        self, api_ids: set[str], *, hold_listener: bool
+    ) -> None:
+        """Stop the API service once the run's terminal state is published.
+
+        SHUTDOWN starts the API's own ``POST_COMPLETE_GRACE`` listener hold;
+        the controller waits the same window so the shared exit deadline in
+        ``shutdown_all_services`` cannot SIGKILL the API mid-hold. Under
+        Kubernetes the API defers this command and is retired through
+        ``POST /api/shutdown`` instead.
         """
         if not self._api_enabled:
             return
-        await self.publish(
-            BenchmarkCompleteMessage(
-                service_id=self.service_id,
-                was_cancelled=self._was_cancelled,
-            )
-        )
+        await self._broadcast_control_command(CommandType.SHUTDOWN, api_ids)
+        if hold_listener:
+            delivery_grace = 0.5
+            if self._is_api_service_alive():
+                delivery_grace = max(
+                    delivery_grace, Environment.API_SERVER.POST_COMPLETE_GRACE
+                )
+            await asyncio.sleep(delivery_grace)
+        await self.service_manager.shutdown_all_services()
 
     @on_stop
     async def _stop_system_controller(self) -> None:
         """Stop the system controller and all running services."""
         await self._set_system_state(SystemState.SHUTDOWN)
 
-        await self._broadcast_control_command(
-            CommandType.SHUTDOWN, ServiceRegistry.get_all_registered_ids()
-        )
-        delivery_grace = 0.5
-        if self._api_enabled and self._is_api_service_alive():
-            delivery_grace = max(
-                delivery_grace, Environment.API_SERVER.POST_COMPLETE_GRACE
-            )
-        await asyncio.sleep(delivery_grace)
-        await self.service_manager.shutdown_all_services()
-
-        # Stop the local UI before console rendering. The message bus remains
-        # live through export so publishing the durable completion state does
-        # not race transport shutdown.
-        await self.ui.stop()
-        await asyncio.sleep(0.1)
-        await self.ui.wait_for_tasks()
-
-        # Reporting must never prevent the service shutdown below. At this
-        # point all result domains and the RAW artifact barrier are complete,
-        # but the API and event bus remain live for the export notification.
+        # The API is the only way a client can observe the export below, so it
+        # is retired last, by _retire_api_service, once the run's terminal state
+        # is published. Stopping it here would spend its grace window before
+        # there is anything to see (NVBugs 7073234).
+        api_ids = {
+            info.service_id for info in ServiceRegistry.get_services(ServiceType.API)
+        }
+        # From here until the API is retired, a cancel (the failure-shutdown
+        # deadline, which can land in a wedged ui.stop()) must still retire the
+        # API it kept alive, or on hosts without a parent-death guard its
+        # listener outlives the run.
         try:
-            await self._report_post_shutdown_results_and_errors()
-
-            if Environment.DEV.MODE:
-                print_developer_mode_warning()
-        except asyncio.CancelledError:
-            raise
-        except (UnicodeEncodeError, OSError) as e:
-            self.error(f"Pre-shutdown reporting failed (continuing to exit): {e!r}")
-        except Exception:
-            self.exception(
-                "Unexpected pre-shutdown reporting failure (continuing to exit)"
+            await self._broadcast_control_command(
+                CommandType.SHUTDOWN,
+                ServiceRegistry.get_all_registered_ids() - api_ids,
             )
+            await asyncio.sleep(0.5)
+            await self.service_manager.shutdown_all_services(exclude=(ServiceType.API,))
 
-        # BenchmarkComplete makes the API shutdown endpoint eligible only
-        # after export/ready publication has finished (or failed closed).
-        await self._announce_benchmark_complete()
+            # Stop the local UI before console rendering. The message bus
+            # remains live through export so publishing the durable completion
+            # state does not race transport shutdown.
+            await self.ui.stop()
+            await asyncio.sleep(0.1)
+            await self.ui.wait_for_tasks()
+
+            # Reporting must never prevent the service shutdown below. At this
+            # point all result domains and the RAW artifact barrier are
+            # complete, but the API and event bus remain live for the export
+            # notification.
+            try:
+                await self._report_post_shutdown_results_and_errors()
+
+                if Environment.DEV.MODE:
+                    print_developer_mode_warning()
+            except (UnicodeEncodeError, OSError) as e:
+                self.error(f"Pre-shutdown reporting failed (continuing to exit): {e!r}")
+            except Exception:
+                self.exception(
+                    "Unexpected pre-shutdown reporting failure (continuing to exit)"
+                )
+
+            # The API's confirmed terminal state makes the API shutdown
+            # endpoint eligible only after export/ready publication has
+            # finished (or failed closed), and must land before the API is
+            # retired.
+            await self._announce_benchmark_complete(api_ids)
+            await self._retire_api_service(api_ids, hold_listener=True)
+        except asyncio.CancelledError:
+            await self._retire_api_service(api_ids, hold_listener=False)
+            raise
         await self.comms.stop()
         # Stopped last of the child-facing transports: shutdown_all_services may
         # still be talking to children over it, and comms does not own it.
@@ -2741,6 +2903,10 @@ class SystemController(
                 f"{e!r}; withholding ResultsExportedMessage"
             )
             return
+        await asyncio.to_thread(
+            remove_committed_request_checkpoint,
+            self.run.cfg.artifacts.profile_export_jsonl_file,
+        )
         try:
             await self.publish(
                 ResultsExportedMessage(

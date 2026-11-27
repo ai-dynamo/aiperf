@@ -435,6 +435,15 @@ class MockServerConfig(BaseSettings):
         Parameter(name=("--fast", "-f")),
     ] = False
 
+    emit_empty_chat_content: Annotated[
+        bool,
+        Field(
+            description="Emit one explicit empty content chunk before streaming "
+            "Chat Completions output."
+        ),
+        Parameter(name="--emit-empty-chat-content"),
+    ] = False
+
     anthropic_split_usage: Annotated[
         bool,
         Field(

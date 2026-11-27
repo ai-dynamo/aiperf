@@ -242,10 +242,11 @@ def _summarize_and_export(
 ) -> int:
     """Log success/failure summary and run confidence + sweep aggregation.
 
-    Returns an exit code (0 on full success, 1 when fewer than 2 runs
-    succeeded). Does not call ``sys.exit`` - the caller is responsible for
-    propagating the code so that registered ``on_complete`` callbacks still
-    run on whatever per-run artifacts were produced.
+    Returns 0 after aggregation with at least two successful runs, or one
+    successful run and no failures. Returns 1 for zero successes or a single
+    success alongside failures. Does not call ``sys.exit`` - the caller
+    propagates the code after registered ``on_complete`` callbacks run on
+    whatever per-run artifacts were produced.
     """
     import asyncio as _asyncio
 
@@ -264,7 +265,7 @@ def _summarize_and_export(
             logger.warning(f"Failed runs: {', '.join(r.label for r in failed_runs)}")
     logger.info("=" * 80)
 
-    if len(successful_runs) >= 2:
+    if len(successful_runs) >= 2 or (len(successful_runs) == 1 and not failed_runs):
         logger.info("Computing aggregate statistics...")
         _asyncio.run(
             aggregate_plan_results(

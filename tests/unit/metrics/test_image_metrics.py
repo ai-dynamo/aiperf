@@ -7,6 +7,7 @@ from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.models.dataset_models import Image, Turn
 from aiperf.metrics.metric_dicts import MetricRecordDict
+from aiperf.metrics.types.good_request_count_metric import GoodRequestCountMetric
 from aiperf.metrics.types.image_metrics import (
     ImageLatencyMetric,
     ImageThroughputMetric,
@@ -152,6 +153,23 @@ class TestImageThroughputMetric:
         )
         metric_results = run_image_metrics_pipeline([record], ImageThroughputMetric.tag)
         assert metric_results[ImageThroughputMetric.tag] == [expected_throughput]
+
+    def test_image_throughput_slo_counts_faster_requests_as_good(self):
+        """--goodput image_throughput:5 means at least 5 images/sec."""
+        GoodRequestCountMetric.set_slos({ImageThroughputMetric.tag: 5.0})
+        try:
+            records = [
+                create_record_with_images(start_ns=0, responses=[100_000_000]),
+                create_record_with_images(start_ns=0, responses=[120_000_000]),
+                create_record_with_images(start_ns=0, responses=[1_000_000_000]),
+            ]
+            metric_results = run_image_metrics_pipeline(
+                records, ImageThroughputMetric.tag, GoodRequestCountMetric.tag
+            )
+        finally:
+            GoodRequestCountMetric.set_slos({})
+
+        assert metric_results[GoodRequestCountMetric.tag] == 2
 
     def test_image_throughput_multiple_records(self):
         """Test throughput across multiple records."""

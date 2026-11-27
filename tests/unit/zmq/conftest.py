@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 import zmq.asyncio
 
-from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.enums import CreditPhase, LifecycleState
 from aiperf.common.messages import HeartbeatMessage
 from aiperf.credit.messages import (
@@ -27,21 +26,6 @@ from aiperf.credit.messages import (
 )
 from aiperf.credit.structs import Credit
 from aiperf.zmq.fd_reader import FdEdgeReader as _RealFdEdgeReader
-
-
-@pytest.fixture(scope="session")
-def event_loop_policy():
-    """Force the selector loop on Windows so the FD-driver can register.
-
-    The FD-driver calls ``loop.add_reader(getsockopt(zmq.FD), ...)``, which the
-    default Windows ``ProactorEventLoop`` does not implement (raises
-    ``NotImplementedError``). Production switches to the selector policy in
-    ``bootstrap._configure_event_loop_policy_for_platform``; the test loop never
-    runs bootstrap, so mirror that here. No-op on Linux/macOS.
-    """
-    if IS_WINDOWS:
-        return asyncio.WindowsSelectorEventLoopPolicy()
-    return asyncio.get_event_loop_policy()
 
 
 async def _block_forever():

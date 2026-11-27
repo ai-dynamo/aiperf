@@ -8,10 +8,16 @@ This test file provides complete coverage of all methods in the PromptGenerator 
 including edge cases, error conditions, and integration scenarios.
 """
 
+from collections.abc import Callable
 from unittest.mock import MagicMock, mock_open, patch
 
 import numpy as np
 import pytest
+import tiktoken
+from pytest import param
+from tokenizers import Tokenizer as BackendTokenizer
+from tokenizers import decoders, models, pre_tokenizers
+from transformers import PreTrainedTokenizerFast
 
 from aiperf.common.enums import PromptCorpus
 from aiperf.common.exceptions import (
@@ -21,9 +27,178 @@ from aiperf.common.exceptions import (
 )
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset.content import PrefixPromptConfig, PromptConfig
-from aiperf.dataset.generator.prompt import PromptGenerator
+from aiperf.dataset.generator.prompt import PromptGenerator, sample_tokens_from_corpus
+from tests.harness.sentencepiece_tokenizer import (
+    SENTENCEPIECE_CORPUS,
+    SENTENCEPIECE_WHITESPACE_CORPUS,
+    make_sentencepiece_tokenizer,
+    make_sentencepiece_whitespace_tokenizer,
+)
 
 MOCK_CORPUS_CONTENT = "To be or not to be, that is the question.\nWhether 'tis nobler in the mind to suffer.\n"
+
+
+def test_generate_cached_prompt_does_not_expand_special_separators() -> None:
+    """BOS/EOS spellings expand when encoded as ordinary chat content."""
+    tokenizer = Tokenizer.from_pretrained("builtin")
+    generator = PromptGenerator(
+        prompts=PromptConfig(block_size=8),
+        prefix_prompts=None,
+        tokenizer=tokenizer,
+    )
+
+    prompt = generator.generate(mean=16, hash_ids=[101, 102])
+
+    ordinary_tokens = tiktoken.get_encoding("o200k_base").encode_ordinary(prompt)
+    assert len(ordinary_tokens) == 16
+
+
+class _FixedStartRng:
+    """Returns a fixed start index and counts draws."""
+
+    def __init__(self, start: int) -> None:
+        self.start = start
+        self.draws = 0
+
+    def randrange(self, n: int) -> int:
+        self.draws += 1
+        return self.start
+
+
+# Token 10 begins a word; 1-4 continue one.
+_WORD_CORPUS = [10, 1, 2, 10, 3, 4]
+
+
+@pytest.mark.parametrize(
+    "start, word_starts, sep_token, expected",
+    [
+        param(1, {10}, None, [10, 3, 4], id="mid-word-start-moves-to-next-word"),
+        param(3, {10}, None, [10, 3, 4], id="word-start-kept"),
+        param(4, {10}, None, [10, 1, 2], id="search-wraps-past-corpus-end"),
+        param(1, {10}, 0, [0, 10, 3], id="separator-precedes-moved-start"),
+        param(1, None, None, [1, 2, 10], id="no-word-starts-keeps-drawn-start"),
+        param(1, {99}, None, [1, 2, 10], id="no-word-start-in-corpus-keeps-drawn-start"),
+    ],
+)  # fmt: skip
+def test_sample_tokens_from_corpus_word_starts_moves_block_start(
+    start: int,
+    word_starts: set[int] | None,
+    sep_token: int | None,
+    expected: list[int],
+) -> None:
+    rng = _FixedStartRng(start)
+
+    tokens = sample_tokens_from_corpus(
+        _WORD_CORPUS, 3, rng, sep_token, word_starts=word_starts
+    )
+
+    assert tokens == expected
+    assert rng.draws == 1
+
+
+@pytest.mark.parametrize(
+    "word_start_position, expected",
+    [
+        param(255, [10, 1], id="last-position-in-window-moves-start"),
+        param(256, [1, 1], id="first-position-past-window-keeps-drawn-start"),
+    ],
+)  # fmt: skip
+def test_sample_tokens_from_corpus_word_start_search_window_is_256_tokens(
+    word_start_position: int, expected: list[int]
+) -> None:
+    corpus = [1] * 512
+    corpus[word_start_position] = 10
+
+    tokens = sample_tokens_from_corpus(corpus, 2, _FixedStartRng(0), word_starts={10})
+
+    assert tokens == expected
+
+
+@pytest.mark.parametrize(
+    "make_tokenizer, corpus",
+    [
+        param(make_sentencepiece_tokenizer, SENTENCEPIECE_CORPUS, id="single-spaces"),
+        param(make_sentencepiece_whitespace_tokenizer, SENTENCEPIECE_WHITESPACE_CORPUS, id="whitespace-runs"),
+    ],
+)  # fmt: skip
+@pytest.mark.parametrize(
+    "num_tokens",
+    [
+        param(54, id="exact-tile"),
+        param(45, id="last-block-partial"),
+        param(80, id="prefix-only-tail"),
+    ],
+)  # fmt: skip
+def test_generate_cached_prompt_sentencepiece_reencodes_to_requested_length(
+    num_tokens: int, make_tokenizer: Callable[[], Tokenizer], corpus: str
+) -> None:
+    """NVBug 7067483: hash-block prompts must re-encode to the requested length."""
+    tokenizer = make_tokenizer()
+    with patch("builtins.open", mock_open(read_data=corpus)):
+        generator = PromptGenerator(
+            prompts=PromptConfig(block_size=18),
+            prefix_prompts=None,
+            tokenizer=tokenizer,
+        )
+
+    lengths = [
+        len(tokenizer.encode(generator.generate(mean=num_tokens, hash_ids=ids)))
+        for ids in ([3 * i, 3 * i + 1, 3 * i + 2] for i in range(50))
+    ]
+
+    assert lengths == [num_tokens] * 50
+
+
+def test_generate_cached_prompt_sentencepiece_shared_hash_ids_reencode_to_same_prefix() -> (
+    None
+):
+    """Prompts sharing leading hash IDs must share their re-encoded prefix tokens."""
+    tokenizer = make_sentencepiece_tokenizer()
+    with patch("builtins.open", mock_open(read_data=SENTENCEPIECE_CORPUS)):
+        generator = PromptGenerator(
+            prompts=PromptConfig(block_size=18),
+            prefix_prompts=None,
+            tokenizer=tokenizer,
+        )
+
+    mismatched = []
+    for i in range(50):
+        shared = [3 * i, 3 * i + 1]
+        first = tokenizer.encode(
+            generator.generate(mean=54, hash_ids=[*shared, 3 * i + 2])
+        )
+        second = tokenizer.encode(
+            generator.generate(mean=54, hash_ids=[*shared, 1000 + i])
+        )
+        if first[:36] != second[:36]:
+            mismatched.append(i)
+
+    assert mismatched == []
+
+
+def test_generate_cached_prompt_gpt2_boundary_preserves_token_budget() -> None:
+    """GPT-2 pretokenization splits a double newline before following text."""
+    backend = BackendTokenizer(
+        models.BPE({"a": 0, "Ċ": 1, "ĊĊ": 2, "Ġ": 3}, [("Ċ", "Ċ")])
+    )
+    backend.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+    backend.decoder = decoders.ByteLevel()
+    tokenizer = Tokenizer()
+    tokenizer._tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend)
+
+    assert tokenizer.encode("\n\n") == [2]
+    assert tokenizer.encode("\n\na") == [1, 1, 0]
+
+    with patch("builtins.open", mock_open(read_data="a" * 1024)):
+        generator = PromptGenerator(
+            prompts=PromptConfig(block_size=512),
+            prefix_prompts=None,
+            tokenizer=tokenizer,
+        )
+
+    prompt = generator.generate(mean=1024, hash_ids=[0, 1])
+
+    assert len(tokenizer.encode(prompt)) == 1024
 
 
 def _make_generator(
@@ -249,9 +424,8 @@ class TestPromptGeneratorComprehensive:
         assert 1 in generator._cache
         assert 2 in generator._cache
 
-        # Each cache entry should have BOS token at start
-        assert generator._cache[1][0] == 1  # BOS token
-        assert generator._cache[2][0] == 1  # BOS token
+        assert len(generator._cache[1]) == 5
+        assert len(generator._cache[2]) == 5
 
         # Should return decoded prompt
         assert isinstance(result, str)
@@ -353,24 +527,6 @@ class TestPromptGeneratorComprehensive:
             _ = generator._generate_cached_prompt(
                 num_tokens=num_tokens, hash_ids=hash_ids, block_size=block_size
             )
-
-    def test_generate_cached_prompt_bos_token_insertion(self, basic_config):
-        """Test that BOS token is correctly inserted in cached prompts."""
-        tokenizer, prompts, prefix_prompts = basic_config
-        generator = _make_generator(
-            tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
-        )
-
-        cache_size = 5
-        generator._generate_cached_prompt(
-            num_tokens=cache_size, hash_ids=[1], block_size=5
-        )
-
-        assert len(generator._cache[1]) == cache_size
-        assert generator._cache[1][0] in [
-            tokenizer.bos_token_id,
-            tokenizer.eos_token_id,
-        ]
 
     def test_cache_reuse_across_calls(self, basic_config):
         """Test that cache is reused across multiple calls."""

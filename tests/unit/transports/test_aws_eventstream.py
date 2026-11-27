@@ -17,6 +17,7 @@ from collections.abc import AsyncIterator
 from unittest.mock import MagicMock
 
 import pytest
+from pytest import param
 
 # botocore ships only in the optional aiperf[aws] extra, and CI installs
 # "--extra test --no-dev" on Windows-on-ARM. Skip the module rather than
@@ -529,3 +530,38 @@ class TestManyLinesInOnePayloadPart:
         lines = [m.line async for m in AwsEventStreamReader(_chunks(frames))]
 
         assert lines == [f'{{"i": {i}}}' for i in range(128)] + ['{"i": "tail"}']
+
+
+class TestLineEdgeWhitespace:
+    """Only ASCII space, tab and CR are stripped from a line and its ``data:``
+    value; U+0085/U+2028/U+2029 and other control characters are content."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "payload,expected",
+        [
+            param(b"data: \xe2\x80\xa8\n", "\u2028", id="prefixed-line-separator-only"),
+            param(b"data: tok\xe2\x80\xa9\n", "tok\u2029", id="prefixed-trailing-paragraph-separator"),
+            param(b"\xc2\x85tok\n", "\u0085tok", id="bare-leading-next-line"),
+            param(b"data: tok\x0c\n", "tok\x0c", id="prefixed-trailing-form-feed"),
+            param(b"\x0c\n", "\x0c", id="form-feed-only-line"),
+            param(b"data: tok\xe2\x80\xa8", "tok\u2028", id="unterminated-trailing-line-separator"),
+            param(b"\x0c", "\x0c", id="unterminated-form-feed-only"),
+        ],
+    )  # fmt: skip
+    async def test_non_padding_edges_are_kept(
+        self, payload: bytes, expected: str
+    ) -> None:
+        frame = encode_frame(payload)
+
+        lines = [m.line async for m in AwsEventStreamReader(_chunks(frame))]
+
+        assert lines == [expected]
+
+    @pytest.mark.asyncio
+    async def test_crlf_and_ascii_padding_are_stripped(self) -> None:
+        frame = encode_frame(b'\t data: \t {"a": 1} \t\r\n data: [DONE] \r\n \t\r\n')
+
+        lines = [m.line async for m in AwsEventStreamReader(_chunks(frame))]
+
+        assert lines == ['{"a": 1}', "[DONE]"]

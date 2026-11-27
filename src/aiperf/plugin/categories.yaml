@@ -117,6 +117,14 @@ public_dataset_loader:
     Supports HTTP-downloaded and HuggingFace-hosted datasets.
     One-to-one mapping: selected based on --public-dataset configuration.
 
+dataset_source_resolver:
+  protocol: aiperf.dataset.remote.protocols:SourceResolverProtocol
+  enum: DatasetSourceScheme
+  description: |
+    Dataset source resolvers fetch remote --input-file references (hf://, s3://, https://)
+    into a local, version-keyed cache before the run. One entry per URI scheme; the
+    reference's scheme selects the resolver. Formats are still handled by custom_dataset_loader.
+
 
 # =============================================================================
 # Endpoint and Transport Categories

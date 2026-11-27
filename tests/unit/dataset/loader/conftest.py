@@ -10,6 +10,7 @@ import pytest
 
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.composer.custom import CustomDatasetComposer
+from aiperf.dataset.loader.weka_synth_buf import RoleSegment
 
 
 @pytest.fixture(autouse=True)
@@ -193,6 +194,17 @@ def stub_hash_id_corpus_rng(prompt_generator) -> None:
     prompt_generator._hash_id_corpus_rng.randrange.side_effect = lambda n: (
         state["h"] % n
     )
+
+
+def make_segments(*spec: tuple[str, int]) -> list[RoleSegment]:
+    """Contiguous weka segments from (role, token count) pairs."""
+    segs, start = [], 0
+    for role, n in spec:
+        segs.append(
+            RoleSegment(role=role, start=start, tokens=list(range(n)), content=role)
+        )
+        start += n
+    return segs
 
 
 @pytest.fixture

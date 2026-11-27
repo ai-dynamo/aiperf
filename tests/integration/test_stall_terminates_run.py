@@ -23,6 +23,10 @@ from tests.integration.conftest import IntegrationTestDefaults as defaults
 # process can exit is the watchdog.
 _NEVER_RETURNS_MS = 600_000
 _STALL_TIMEOUT_S = 5
+# 150 tokens at 200ms each keeps one request streaming for ~30s, six times the
+# timeout, so a watchdog that ignores token arrivals is certain to fire.
+_SLOW_ITL_MS = 200
+_SLOW_OUTPUT_TOKENS = 150
 
 
 @pytest.mark.integration
@@ -62,3 +66,44 @@ async def test_a_stalled_run_exits_instead_of_waiting_on_server_metrics(
         f"server metrics never engaged, so this run did not cover the "
         f"configuration the defect needs: {output[-2000:]}"
     )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_a_slow_but_streaming_request_is_not_treated_as_a_stall(
+    cli: AIPerfCLI, mock_server_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A request that streams for longer than the timeout must not be killed.
+
+    Completion counts alone cannot tell a long generation from a stuck one:
+    neither moves them. A model with no output-token cap held one request open
+    for eleven minutes while delivering tokens the whole time, and the run was
+    cancelled as a request that "never returned". Streamed chunks are what
+    separates the two, so this exercises the whole path -- aiohttp counter,
+    worker health report, watchdog decision -- rather than any one piece. The
+    inter-token latency here keeps the request streaming well past the timeout.
+    """
+    monkeypatch.setenv("AIPERF_RECORD_PROGRESS_STALL_TIMEOUT", str(_STALL_TIMEOUT_S))
+    monkeypatch.setenv("AIPERF_RECORD_PROGRESS_STALL_CHECK_INTERVAL", "1")
+
+    async with mock_server_factory(ttft=100, itl=_SLOW_ITL_MS) as server:
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --tokenizer builtin \
+                --url {server.url} \
+                --endpoint-type chat \
+                --streaming \
+                --concurrency 1 \
+                --request-count 2 \
+                --output-tokens-mean {_SLOW_OUTPUT_TOKENS} \
+                --ui none
+            """,
+            timeout=180.0,
+            assert_success=False,
+        )
+
+    output = result.stdout + result.stderr
+    assert "Benchmark stalled" not in output, output[-2000:]
+    assert result.exit_code == 0, output[-2000:]

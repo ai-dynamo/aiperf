@@ -72,6 +72,16 @@ the results sidecar. Kubernetes sweep aggregation uses
 the same durable ready-marker commit after plotting and scratch-artifact pruning
 finish, so the operator never harvests a partially published aggregate tree.
 
+When the API service is running, it is the last service the controller stops.
+The controller sends `SHUTDOWN` to every other service and waits for them to
+exit, exports and commits the ready marker, then sends the API a
+`BENCHMARK_COMPLETE` command on the control channel and waits (bounded by
+`AIPERF_API_SERVER_COMPLETE_ACK_TIMEOUT`) for its reply. Only then does it send
+the API `SHUTDOWN`, which starts the `AIPERF_API_SERVER_POST_COMPLETE_GRACE`
+listener hold. That reply is the controller's proof that `/api/results` reports
+the terminal status before the listener starts closing. See
+[HTTP API Endpoints](reference/api-endpoints.md#results-lifetime).
+
 ### Dataset Manager
 
 The Dataset Manager handles all aspects of input data management during benchmarking runs.
@@ -82,6 +92,8 @@ The Dataset Manager handles all aspects of input data management during benchmar
 - Writing dataset to memory-mapped files, enabling workers to access data directly without message passing
 - Supporting custom dataset types, such as MoonCake traces, for advanced benchmarking scenarios
 - Managing the lifecycle of datasets, including initialization, iteration, and cleanup
+
+**Remote `--input-file` references.** A `--input-file` of the form `hf://...`, `s3://...`, or `https://...` is parsed into a `RemoteRef` and resolved by the `dataset_source_resolver` plugin registered for its scheme. Resolution runs in two dataset preflight stages: the access stage probes the source, pins one exact version, applies the publisher's `aiperf.json` manifest, and settles fixed-schedule auto-promotion from the first record; the materialize stage, after the endpoint probe, downloads the pinned version into a version-keyed local cache. `DatasetManager` and the composers only ever see a cached local path, so a remote dataset replays exactly like the same file on disk. See [Run a Published Trace](tutorials/remote-datasets.md).
 
 ### Timing Manager
 
@@ -118,6 +130,22 @@ Workers are the processes that send HTTP requests to the inference server and me
 - No coordination between workers
 - Adding more workers increases load capacity and request rates
 
+Workers announce connectivity before dataset initialization. They enter the
+credit routing pool only after their dataset opens, in both local and Kubernetes
+modes. Until then, the router excludes them from stale-worker eviction. Dataset
+opening and page preloading run in a background thread so that initialization
+does not occupy the worker event loop. Existing startup timeouts still bound
+initialization, and heartbeat eviction still applies to dispatchable workers.
+Local workers use the existing dataset status query to recover a notification
+that arrived before they subscribed. They retry after a timeout or an
+unconfigured response until the dataset opens or the worker stops.
+
+Dataset saving streams `inputs.json` and verbatim turn payloads in bounded JSON
+chunks. String escaping also uses bounded chunks, so a single large turn does
+not require a document-sized `orjson.dumps` call that holds Python's global
+interpreter lock. Output formatting, conversation order, and byte offsets stay
+the same.
+
 ### Record Processor
 
 The Record Processor processes and interprets the responses received from the inference server during benchmarking.
@@ -146,6 +174,17 @@ The Records Manager handles the collection, organization, and storage of benchma
 or analyzers produce. Profiling counts exclude warmup requests, and cancelled
 summaries count the requests processed so far.
 
+Phase completion and warmup progress logs report `worker_errors`: errors known
+when workers return request credits. Response processing can detect additional
+failures afterward, such as a successful HTTP response with no usable completion.
+The Records Manager's processed-record summary and exported `error_request_count`
+include these failures. Once profiling records reconcile with worker completions
+and every participating profiling phase has a known worker-error count, an
+`Error accounting` log explains any additional `response_processing_errors`
+alongside `worker_errors` and `total_errors`. This breakdown excludes intentional
+context-overflow skips from `worker_errors` because they are not record errors.
+This does not return another request credit or change exported counts.
+
 #### Record-Type Channels
 
 The Records Manager does not hard-wire one handler per producer. Instead, every typed record carries a `record_type` class attribute and is fanned out through a metadata-driven routing table: each accumulator and stream exporter declares the record types it consumes via `record_types` in `plugins.yaml`, and `_dispatch_record` routes each record by `getattr(record, "record_type")` to all registered handlers. This makes each record type a dedicated channel.
@@ -160,6 +199,8 @@ Prometheus snapshots remain inside Server Metrics Manager:
 | `accuracy` | Record Processor (`AccuracyRecordProcessor`) | `RecordsMessage` | `AccuracyAccumulator`, `AccuracyJSONLWriter` |
 | `gpu_telemetry` | GPU Telemetry Manager | `TelemetryRecordsMessage` | `GPUTelemetryAccumulator`, GPU JSONL writer |
 | `server_metrics` | Server Metrics Manager | None (manager-local callback) | `ServerMetricsAccumulator`, server-metrics JSONL writer, both hosted by Server Metrics Manager |
+
+Live request-metric summaries omit per-timeslice statistics. Per-timeslice request statistics are computed by `MetricsAccumulator.export_results()` for final exports and plots, avoiding unused timeslice calculations during each live update. Live summaries skip sweep curves unless the UI is the interactive dashboard, because the progress log does not use their 14 metrics. Final exports retain those metrics. Every non-dashboard run (including `--api-port` WebSocket and `/metrics` subscribers, and Kubernetes runs, which force `--ui simple`) omits them from live `RealtimeMetricsMessage` payloads. Server-metric time series are independent of this path.
 
 **Two-stage record processing.** The `RecordProcessorService` runs two roles per parsed response (mirroring the accumulator/stream-exporter split on the consumer side): **producers** (`record_processor` category) parse and emit one finished typed record on a declared `record_type` channel — `MetricRecordProcessor` → `MetricRecordsData` (`metric_records`), `AccuracyRecordProcessor` → `AccuracyRecordsData` (`accuracy`) — and **observers** (`record_observer` category, e.g. the raw-record and outputs-json writers) receive a `RecordObserverContext` (the parsed record + all producer outputs keyed by `record_type`) and act without emitting a channel record. Each producer's output carries its own serialized `record_type` discriminator, so the service ships **one generic `RecordsMessage`** per request — `{metadata, records: list[RecordData], error}` — and the `RecordsManager` dispatches each record to its channel handlers by `record.record_type` (no per-type message classes, no type-sniffing). The metric record is the canonical per-request record that drives the phase-completion lockstep, keyed off the message metadata.
 
@@ -236,7 +277,7 @@ The Timing Manager uses a **credit-based flow control system** to control when r
 - Each credit grants permission to send one request
 - The Timing Manager issues credits according to the configured timing mode:
   - **Fixed schedule mode**: Replays conversation traces at precise timestamps from dataset metadata
-  - **Request-rate mode**: Issues credits at a specific rate with configurable arrival patterns (constant, Poisson, gamma, concurrency burst)
+  - **Request-rate mode**: Issues credits at a specific rate with configurable arrival patterns (constant, Poisson, gamma, concurrency burst). Constant, Poisson, and gamma phases can opt into `continuation_dispatch: direct`: rate slots then start sessions, while root continuations use the phase scheduler after think time and retain the CreditIssuer stop and concurrency checks. The default `rate_slot` policy paces every turn.
   - **User-centric rate mode**: Each session acts as a separate user with calculated gaps between turns
 
 **Flow Control Benefits:**
@@ -249,7 +290,9 @@ The Timing Manager uses a **credit-based flow control system** to control when r
 - Credits are dispatched to workers via a ROUTER/DEALER pattern (the Timing Manager's sticky ROUTER to each worker's DEALER)
 - Router selects workers based on sticky sessions (multi-turn conversations) or least-loaded worker selection
 - If a registered worker that owns in-flight credits or sticky sessions is lost during an active benchmark, the Timing Manager cancels the phase and records a terminal failure rather than migrating or truncating worker-local state.
-- Credit returns travel back on a dedicated PUSH/PULL fan-in channel: each worker PUSHes its `CreditReturn`/`FirstToken` to the Timing Manager's single PULL, separating the high-volume return path from credit dispatch
+- Credit returns travel back on a dedicated PUSH/PULL fan-in channel: each worker PUSHes its `CreditReturn`/`FirstToken` to the Timing Manager's single PULL, separating the high-volume return path from credit dispatch. Finite replay also sends `TransportDispatched` on this channel to record HTTP request start and release dispatch-dependent turns. `CreditReturn` carries the successful response-body EOF timestamp for completion dependencies.
+- Finite replay sends transport start and response EOF timestamps on the return channel. Local workers send same-host performance timestamps directly; Kubernetes workers send wall timestamps with clock correction so the controller can place events on its performance clock.
+- Phase lifecycles require the credit router's shared monotonic clock, keeping phase boundaries and credit timestamps in the same frame across wall-clock adjustments. HTTP body EOF is checked before recording its timestamp and invoking the completion callback; an incomplete body reports `ResponseBodyIncompleteError` for streaming, binary, and text responses.
 - The return channel carries no ZMQ envelope identity, so the returning worker id travels inside the message
 - No coordination required between workers
 - Scales to large numbers of workers without bottlenecks
@@ -350,6 +393,13 @@ a result, an error, or an explicit "no handler" response. See
 Registration is deliberately the *second* readiness proof a service gives: it
 runs after the event-bus connection probe succeeds, so a registered service has
 demonstrated both planes are live.
+
+The registration's `instance_id` remains stable across reconnects and changes
+when the service process restarts. The controller uses it to detect optional
+server-metrics history loss promptly, release the failed producer from the
+result barrier, and export inference results with an explicit telemetry error.
+Server-metrics numeric histories live on the artifact filesystem with finite
+disk and series budgets; see [long-run collection behavior](server-metrics/server-metrics.md#long-runs-and-collection-failures).
 
 **Heartbeats are sent on both planes, on purpose.** Every service emits a
 `Heartbeat` struct on the control channel *and* a `HeartbeatMessage` on the event

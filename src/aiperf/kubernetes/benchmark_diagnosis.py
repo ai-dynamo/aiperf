@@ -34,6 +34,7 @@ from aiperf.kubernetes.environment import K8sEnvironment
 __all__ = [
     "BenchmarkFinding",
     "diagnose_benchmark",
+    "diagnose_job_failure",
     "error_rate",
     "error_rate_from_metrics",
     "format_error_counts",
@@ -286,4 +287,61 @@ def diagnose_benchmark(
     _check_stalled(status, elapsed_seconds, findings)
     _check_error_rate(status, findings)
     _check_tail_latency(status, findings)
+    return findings
+
+
+def _dataset_unavailable_finding(condition: Any) -> BenchmarkFinding | None:
+    """A finding for a ``DatasetReady=False`` condition, or None for any other entry."""
+    if not isinstance(condition, dict):
+        return None
+    if condition.get("type") != "DatasetReady" or condition.get("status") != "False":
+        return None
+    return BenchmarkFinding(
+        id="dataset_unavailable",
+        severity="critical",
+        title=f"DatasetReady=False ({condition.get('reason') or 'no reason'})",
+        detail=str(condition.get("message") or ""),
+        impact="The dataset-manager pod could not load the dataset, so no requests were sent.",
+        suggested_fix="Look the message up in the troubleshooting table of docs/tutorials/remote-datasets.md.",
+    )
+
+
+def diagnose_job_failure(status: dict[str, Any]) -> list[BenchmarkFinding]:
+    """Surface ``status.error`` and a ``DatasetReady=False`` condition as findings.
+
+    A job that failed before it produced metrics trips none of the metric
+    detectors, so without these the report would show nothing about why. A
+    dataset failure sets both to the same text; it is then reported once, as
+    the dataset finding.
+
+    Example:
+        ```python
+        findings = diagnose_job_failure(cr["status"])
+        # [BenchmarkFinding(id="dataset_unavailable", ...)]
+        ```
+    """
+    conditions = status.get("conditions")
+    dataset_findings = [
+        finding
+        for condition in (conditions if isinstance(conditions, list) else [])
+        if (finding := _dataset_unavailable_finding(condition)) is not None
+    ]
+    findings: list[BenchmarkFinding] = []
+    error = status.get("error")
+    if (
+        isinstance(error, str)
+        and error
+        and all(finding.detail != error for finding in dataset_findings)
+    ):
+        findings.append(
+            BenchmarkFinding(
+                id="job_error",
+                severity="critical",
+                title="Job error (status.error)",
+                detail=error,
+                impact="The operator stopped the job for this reason.",
+                suggested_fix="Fix the cause the message names, then submit the job again.",
+            )
+        )
+    findings.extend(dataset_findings)
     return findings

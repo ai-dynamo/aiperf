@@ -436,7 +436,8 @@ def validate_endpoint_credential_transport(
         validate_kubernetes_credential_transport(
             config.benchmark.endpoint,
             deployment.pod_template.env,
-            config.benchmark.server_metrics,
+            datasets=config.benchmark.datasets,
+            server_metrics=config.benchmark.server_metrics,
         )
     except (
         ConfigurationError,

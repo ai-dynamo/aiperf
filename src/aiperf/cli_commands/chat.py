@@ -189,9 +189,7 @@ async def _run_turn(
     print(format_stats(compute_record_metrics(record), reasoning_tokens))
     # Fall back to the reasoning text only when the reply had no visible content,
     # so a reasoning-only turn isn't recorded as an empty assistant message.
-    # Intentionally content-only when content exists: unlike profile's per-chunk
-    # build_assistant_turn (which concatenates reasoning + content), we don't
-    # resend reasoning, matching how chat APIs replay assistant turns.
+    # Same answer-else-reasoning rule as BaseEndpoint.build_assistant_turn.
     return "".join(output_parts) or "".join(reasoning_parts)
 
 

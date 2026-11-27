@@ -24,6 +24,7 @@ from aiperf.common.messages import (
 from aiperf.common.mixins import BaselineCollectorMixin
 from aiperf.common.models import ErrorDetails, TelemetryRecord
 from aiperf.common.protocols import PushClientProtocol
+from aiperf.common.redact import redact_url
 from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import GPUTelemetryCollectorType, PluginType
@@ -32,6 +33,11 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 __all__ = ["GPUTelemetryManager"]
+
+
+def _redacted(value: object) -> str:
+    """Text with endpoint credentials removed; aiohttp errors embed the URL."""
+    return redact_url(str(value))
 
 
 @dataclass(slots=True)
@@ -220,14 +226,24 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
                     kwargs={},
                 )
             ]
-        return [
-            _CollectorCandidate(
-                collector_type=self._collector_type,
-                collector_id=f"collector_{dcgm_url.replace(':', '_').replace('/', '_')}",
-                kwargs={"dcgm_url": dcgm_url},
+        candidates: list[_CollectorCandidate] = []
+        seen: dict[str, int] = {}
+        for dcgm_url in self._dcgm_endpoints:
+            # Built from the redacted URL so the id carries no credentials, and
+            # suffixed so endpoints that differ only in credentials stay distinct.
+            base_id = (
+                f"collector_{redact_url(dcgm_url).replace(':', '_').replace('/', '_')}"
             )
-            for dcgm_url in self._dcgm_endpoints
-        ]
+            count = seen.get(base_id, 0)
+            seen[base_id] = count + 1
+            candidates.append(
+                _CollectorCandidate(
+                    collector_type=self._collector_type,
+                    collector_id=base_id if count == 0 else f"{base_id}_{count}",
+                    kwargs={"dcgm_url": dcgm_url},
+                )
+            )
+        return candidates
 
     async def _configure_reachable_collectors(
         self, candidates: list[_CollectorCandidate]
@@ -249,16 +265,19 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
                     error_callback=self._on_telemetry_error,
                     collector_id=candidate.collector_id,
                 )
+                # Collectors stay keyed by the real URL, which is unique; every
+                # value that reaches records, logs or status uses the redacted one.
                 source_identifier = collector.endpoint_url
-                configured_sources.append(source_identifier)
+                shown = redact_url(source_identifier)
+                configured_sources.append(shown)
                 is_reachable = await collector.is_url_reachable()
                 if not is_reachable:
-                    self.warning(f"GPU Telemetry: {source_identifier} is not reachable")
+                    self.warning(f"GPU Telemetry: {shown} is not reachable")
                     continue
 
                 self._collectors[source_identifier] = collector
-                self._collector_id_to_url[candidate.collector_id] = source_identifier
-                self.debug(f"GPU Telemetry: {source_identifier} is reachable")
+                self._collector_id_to_url[candidate.collector_id] = shown
+                self.debug(f"GPU Telemetry: {shown} is reachable")
                 baseline_failure_reason = await self._capture_collector_baseline(
                     collector,
                     candidate.collector_id,
@@ -267,12 +286,15 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
                 if baseline_failure_reason is not None:
                     failure_reason = baseline_failure_reason
             except RuntimeError as e:
-                failure_reason = str(e)
-                self.error(f"GPU Telemetry: {e}")
+                failure_reason = _redacted(e)
+                self.error(f"GPU Telemetry: {failure_reason}")
             except Exception as e:  # fault-tolerant telemetry
-                failure_reason = f"{collector_name} configuration failed: {e}"
+                failure_reason = (
+                    f"{collector_name} configuration failed: {_redacted(e)}"
+                )
                 self.error(
-                    f"GPU Telemetry: Failed to configure {collector_name} collector: {e}"
+                    f"GPU Telemetry: Failed to configure {collector_name} collector: "
+                    f"{_redacted(e)}"
                 )
         return configured_sources, failure_reason
 
@@ -282,32 +304,33 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
         collector_id: str,
         source_identifier: str,
     ) -> str | None:
-        self.info(f"GPU Telemetry: Capturing baseline metrics from {source_identifier}")
+        shown = redact_url(source_identifier)
+        self.info(f"GPU Telemetry: Capturing baseline metrics from {shown}")
         try:
             await collector.initialize()
         except (Exception, asyncio.CancelledError) as e:
             self.warning(
-                f"GPU Telemetry: Failed to initialize {source_identifier} during "
-                f"baseline capture, disabling collector: {e!r}"
+                f"GPU Telemetry: Failed to initialize {shown} during "
+                f"baseline capture, disabling collector: {redact_url(repr(e))}"
             )
             self._collectors.pop(source_identifier, None)
             self._collector_id_to_url.pop(collector_id, None)
-            return f"{source_identifier} initialization failed: {e}"
+            return f"{shown} initialization failed: {_redacted(e)}"
 
         try:
             await collector.collect_and_process_metrics()
-            self.debug(f"GPU Telemetry: Captured baseline from {source_identifier}")
+            self.debug(f"GPU Telemetry: Captured baseline from {shown}")
         except Exception as e:  # baseline scrape best-effort
             self.warning(
-                f"GPU Telemetry: Failed to capture baseline from {source_identifier} "
-                f"(collector remains enabled): {e}"
+                f"GPU Telemetry: Failed to capture baseline from {shown} "
+                f"(collector remains enabled): {_redacted(e)}"
             )
         return None
 
     async def _send_configure_status(
         self, configured_sources: list[str], failure_reason: str | None
     ) -> None:
-        reachable_endpoints = list(self._collectors.keys())
+        reachable_endpoints = [redact_url(url) for url in self._collectors]
         reachable_defaults = [
             ep
             for ep in Environment.GPU.DEFAULT_DCGM_ENDPOINTS
@@ -352,7 +375,9 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
             try:
                 await collector.collect_and_process_metrics()
             except Exception as exc:  # one failed endpoint should not skip others
-                errors.append(f"{telemetry_source_url}: {type(exc).__name__}: {exc}")
+                errors.append(
+                    f"{redact_url(telemetry_source_url)}: {type(exc).__name__}: {_redacted(exc)}"
+                )
         if errors:
             raise RuntimeError("; ".join(errors))
 
@@ -380,7 +405,10 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
                 await collector.start()
                 started_count += 1
             except Exception as e:  # fault-tolerant telemetry
-                self.error(f"Failed to start collector for {telemetry_source_url}: {e}")
+                self.error(
+                    f"Failed to start collector for {redact_url(telemetry_source_url)}: "
+                    f"{_redacted(e)}"
+                )
 
         if started_count == 0:
             self.warning("No GPU telemetry collectors successfully started")
@@ -429,11 +457,13 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
             try:
                 await collector.collect_and_process_metrics()
                 self.debug(
-                    f"GPU Telemetry: Captured final state from {telemetry_source_url}"
+                    f"GPU Telemetry: Captured final state from "
+                    f"{redact_url(telemetry_source_url)}"
                 )
             except Exception as e:
                 self.warning(
-                    f"GPU Telemetry: Failed to capture final state from {telemetry_source_url}: {e}"
+                    f"GPU Telemetry: Failed to capture final state from "
+                    f"{redact_url(telemetry_source_url)}: {_redacted(e)}"
                 )
 
         await self._stop_all_collectors()
@@ -477,7 +507,10 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
             try:
                 await collector.stop()
             except Exception as e:  # fault-tolerant telemetry
-                self.error(f"Failed to stop collector for {telemetry_source_url}: {e}")
+                self.error(
+                    f"Failed to stop collector for {redact_url(telemetry_source_url)}: "
+                    f"{_redacted(e)}"
+                )
 
     async def _on_telemetry_records(
         self, records: list[TelemetryRecord], collector_id: str
@@ -584,7 +617,13 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
                     collector_id=collector_id,
                     telemetry_source_url=telemetry_source_url,
                     records=[],
-                    error=error,
+                    # aiohttp errors embed the request URL, credentials included.
+                    error=error.model_copy(
+                        update={
+                            "message": _redacted(error.message),
+                            "cause": _redacted(error.cause) if error.cause else None,
+                        }
+                    ),
                     sequence=sequence,
                 )
 
@@ -614,12 +653,16 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
             endpoints_reachable: Telemetry source URLs that are accessible
         """
         try:
+            # Every status path goes through here, so this is where endpoint
+            # credentials are kept out of the published message.
             status_message = TelemetryStatusMessage(
                 service_id=self.service_id,
                 enabled=enabled,
-                reason=reason,
-                endpoints_configured=endpoints_configured or [],
-                endpoints_reachable=endpoints_reachable or [],
+                reason=redact_url(reason) if reason else reason,
+                endpoints_configured=[
+                    redact_url(u) for u in endpoints_configured or []
+                ],
+                endpoints_reachable=[redact_url(u) for u in endpoints_reachable or []],
             )
 
             await self.publish(status_message)

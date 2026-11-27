@@ -1210,18 +1210,18 @@ class TestRegistration:
             )
 
     def test_first_record_has_timestamp_detects_tracelab(self, tmp_path):
-        """_first_record_has_timestamp must return True for TraceLab rows so
+        """first_record_has_timestamp must return True for TraceLab rows so
         _maybe_auto_promote_trace can promote them to fixed-schedule."""
-        from aiperf.config.flags._converter_profiling import _first_record_has_timestamp
+        from aiperf.dataset.trace_timestamps import first_record_has_timestamp
 
         path = write_jsonl(tmp_path / "t.jsonl", [make_row()])
-        assert _first_record_has_timestamp(path)
+        assert first_record_has_timestamp(path)
 
     def test_first_record_has_timestamp_detects_gzipped_tracelab(self, tmp_path):
-        from aiperf.config.flags._converter_profiling import _first_record_has_timestamp
+        from aiperf.dataset.trace_timestamps import first_record_has_timestamp
 
         gz = write_jsonl(tmp_path / "t.jsonl.gz", [make_row()], gz=True)
-        assert _first_record_has_timestamp(gz)
+        assert first_record_has_timestamp(gz)
 
     def test_fixed_schedule_accepts_tracelab_timing(self):
         """Timing is nested under timing_events, so the generic probe misses it."""
