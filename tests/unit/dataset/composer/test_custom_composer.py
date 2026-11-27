@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock, mock_open, patch
 
 import pytest
@@ -514,9 +515,9 @@ class TestExplicitCustomDatasetType:
         assert composer.loader._tokenizer is mock_tokenizer
 
     def test_dag_jsonl_forwards_tokenizer_for_structural_span_calibration(
-        self, tmp_path, mock_tokenizer
-    ):
-        def _two_tokens_per_long_word(text: str, **kwargs) -> list[int]:
+        self, tmp_path: Path, mock_tokenizer: Mock
+    ) -> None:
+        def _two_tokens_per_long_word(text: str, **_kwargs: Any) -> list[int]:
             out: list[int] = []
             for idx, word in enumerate(text.split()):
                 out.append(idx * 2)
@@ -545,6 +546,24 @@ class TestExplicitCustomDatasetType:
         turn1_text = convs[0].turns[1].raw_messages[0]["content"][0]["text"]
         assert len(mock_tokenizer.encode(turn0_text)) == 6
         assert len(mock_tokenizer.encode(turn1_text)) == 5
+
+    def test_multi_turn_with_extra_media_segments_still_autodetects_multi_turn(
+        self, tmp_path: Path, mock_tokenizer: Mock
+    ) -> None:
+        jsonl = tmp_path / "mt_with_extra.jsonl"
+        jsonl.write_text(
+            '{"session_id": "s", "turns": [{"text": "hi", "media_segments": []}]}\n'
+        )
+        cli_config = CLIConfig(
+            model_names=["test-model"],
+            input_file=str(jsonl),
+        )
+        composer = CustomDatasetComposer(
+            run=make_run(cli_config), tokenizer=mock_tokenizer
+        )
+        convs = composer.create_dataset()
+        assert isinstance(composer.loader, MultiTurnDatasetLoader)
+        assert len(convs) == 1
 
     def test_random_pool_routes_to_random_pool_loader(self, tmp_path, mock_tokenizer):
         """`--custom-dataset-type random-pool` must produce a RandomPoolDatasetLoader."""

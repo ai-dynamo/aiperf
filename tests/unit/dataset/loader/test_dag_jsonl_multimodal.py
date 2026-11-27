@@ -5,14 +5,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import hashlib
 import io
 import socket
+import stat
+import sys
+import threading
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import aiohttp
+import numpy as np
 import orjson
 import pytest
 from pydantic import ValidationError
@@ -29,22 +36,28 @@ from aiperf.dataset.loader.dag_jsonl import DagJsonlLoader, DagLoadError
 from aiperf.dataset.loader.dag_jsonl_media import (
     DagMultimodalMaterializer,
     LocalMediaHttpServer,
+    _encode_mp4_with_codec,
     compute_mixed_block_hashes,
+    default_media_uuid,
     find_ffmpeg_binary,
     iter_deterministic_rgb_frames,
+    prepare_materializer_for_conversations,
     staged_frame_filename,
     staged_media_filename,
     synth_deterministic_png_bytes,
+    synthesize_deterministic_rgb_frames,
     validate_dag_zero_leakage,
     verify_mp4_decodable,
     verify_png_bytes,
     write_deterministic_h264_mp4,
 )
 from aiperf.dataset.loader.dag_jsonl_models import (
+    DagConversation,
     DagMediaSegment,
     DagPromptSpan,
     DagTurn,
 )
+from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
 from aiperf.workers.session_manager import UserSession
 from aiperf.workers.worker import _apply_cache_bust
 
@@ -272,6 +285,28 @@ class TestDagMultimodalModels:
         assert authored.messages is not None
         assert authored.messages[0]["tool_call_id"] == "call_abc"
 
+    def test_media_prompt_span_requires_user_role(self) -> None:
+        for bad_role in ("system", "assistant"):
+            with pytest.raises(ValidationError, match="requires role='user'"):
+                DagPromptSpan(
+                    kind="media",
+                    span_id="img0",
+                    tokens=16,
+                    media_index=0,
+                    role=bad_role,  # type: ignore[arg-type]
+                )
+
+        sys_text = DagPromptSpan(kind="text", span_id="sys0", tokens=16, role="system")
+        asst_text = DagPromptSpan(
+            kind="text", span_id="asst0", tokens=16, role="assistant"
+        )
+        user_media = DagPromptSpan(
+            kind="media", span_id="img0", tokens=16, media_index=0, role="user"
+        )
+        assert sys_text.role == "system"
+        assert asst_text.role == "assistant"
+        assert user_media.role == "user"
+
     def test_ambiguous_hash_only_media_ref_and_span_require_media_index(self) -> None:
         seg_small = DagMediaSegment(
             media_hash="shared_key", kind="image", width=64, height=64
@@ -310,18 +345,35 @@ class TestDagMultimodalModels:
         assert indexed.prompt_spans[0].media_index == 1
 
     @pytest.mark.parametrize(
-        "probe,expected",
+        "probe,expected_dag,expected_multi_turn",
         [
-            param({"session_id": "root", "turns": [{"in_text_tokens": 32}]}, True, id="positive_in_text_tokens"),
-            param({"session_id": "root", "turns": [{"in_text_tokens": 0}]}, False, id="zero_in_text_tokens"),
-            param({"session_id": "root", "turns": [{"in_text_tokens": True}]}, False, id="bool_in_text_tokens"),
-            param({"session_id": "s1", "turns": [{"text": "plain multi-turn"}]}, False, id="multi_turn_text_only"),
+            param({"session_id": "root", "turns": [{"in_text_tokens": 32}]}, True, False, id="positive_in_text_tokens"),
+            param({"session_id": "root", "turns": [{"in_text_tokens": 0}]}, False, False, id="zero_in_text_tokens"),
+            param({"session_id": "root", "turns": [{"in_text_tokens": True}]}, False, False, id="bool_in_text_tokens"),
+            param({"session_id": "s1", "turns": [{"text": "plain multi-turn"}]}, False, True, id="multi_turn_text_only"),
+            param({"session_id": "s1", "turns": [{"text": "hi", "media_segments": []}]}, False, True, id="multi_turn_empty_media_segments"),
+            param({"session_id": "s1", "turns": [{"text": "hi", "prompt_spans": []}]}, False, True, id="multi_turn_empty_prompt_spans"),
+            param(
+                {"session_id": "s1", "turns": [{"text": "hi", "media_segments": [{"media_hash": "m", "kind": "image", "width": 64, "height": 64}]}]},
+                False,
+                True,
+                id="multi_turn_with_extra_media_segments",
+            ),
+            param({"session_id": "root", "turns": [{"media_segments": []}]}, False, False, id="empty_media_segments_only"),
+            param({"session_id": "root", "turns": [{"prompt_spans": []}]}, False, False, id="empty_prompt_spans_only"),
+            param(
+                {"session_id": "root", "turns": [{"media_segments": [{"media_hash": "m", "kind": "image", "width": 64, "height": 64}]}]},
+                True,
+                False,
+                id="non_empty_media_segments",
+            ),
         ],
     )  # fmt: skip
     def test_can_load_recognizes_positive_in_text_tokens_narrowly(
-        self, probe: dict[str, Any], expected: bool
+        self, probe: dict[str, Any], expected_dag: bool, expected_multi_turn: bool
     ) -> None:
-        assert DagJsonlLoader.can_load(probe) is expected
+        assert DagJsonlLoader.can_load(probe) is expected_dag
+        assert MultiTurnDatasetLoader.can_load(probe) is expected_multi_turn
 
 
 class TestDeterministicSynthesisAndBlockHashes:
@@ -486,8 +538,147 @@ class TestDeterministicSynthesisAndBlockHashes:
 
     def test_iter_deterministic_rgb_frames_matches_buffered_output(self) -> None:
         streamed = list(iter_deterministic_rgb_frames(64, 48, 3, "seed_stream"))
-        assert len(streamed) == 3
-        assert all(arr.shape == (48, 64, 3) for arr in streamed)
+        buffered = synthesize_deterministic_rgb_frames(64, 48, 3, "seed_stream")
+        assert len(streamed) == len(buffered) == 3
+        for s_arr, b_arr in zip(streamed, buffered, strict=True):
+            assert s_arr.shape == (48, 64, 3)
+            assert s_arr.dtype == np.uint8
+            assert 16 <= int(s_arr.min()) < int(s_arr.max()) < 240
+            assert np.array_equal(s_arr, b_arr)
+
+        expected_f1 = np.roll(np.roll(streamed[0], shift=16, axis=1), shift=8, axis=0)
+        expected_f2 = np.roll(streamed[0], shift=32, axis=1)
+        assert np.array_equal(streamed[1], expected_f1)
+        assert np.array_equal(streamed[2], expected_f2)
+
+        digests = [hashlib.sha256(arr.tobytes()).hexdigest() for arr in streamed]
+        assert digests == [
+            "c61e0b781c9d761d03cd524dcff72e07d07531f69505f57f4625f7a98b916728",
+            "61af7104637e7eea4088b582c8b1b7d28e9b03a3d2d7daad51c70737c7afbbb7",
+            "8bf33d334ccf2efde8f2911f459100bc37bb5ffee25b0ad7e87d0778bfd02a3f",
+        ]
+
+    def test_ffmpeg_cleanup_reaps_running_child_before_closing_stderr(
+        self, tmp_path: Path
+    ) -> None:
+        class _RunningFakePopen:
+            def __init__(self, stdout_payload: bytes = b"") -> None:
+                self._alive = True
+                self.killed = False
+                self.waited = False
+                self.stderr_closed_before_wait = False
+                self.stdin = _ChunkTrackingSink(None)
+                self.stdout = io.BytesIO(stdout_payload)
+                self.stderr = io.BytesIO(b"diagnostic tail\n")
+
+            def poll(self) -> int | None:
+                return None if self._alive else -9
+
+            def kill(self) -> None:
+                self.killed = True
+                self._alive = False
+
+            def wait(self) -> int:
+                self.stderr_closed_before_wait = self.stderr.closed
+                self.waited = True
+                self._alive = False
+                return -9
+
+        enc_proc = _RunningFakePopen()
+
+        def _failing_frames() -> Iterator[np.ndarray]:
+            raise ValueError("exceeds safety limit")
+            yield np.zeros((4, 4, 3), dtype=np.uint8)
+
+        with (
+            patch("subprocess.Popen", return_value=enc_proc),
+            pytest.raises(ValueError, match="exceeds safety limit"),
+        ):
+            _encode_mp4_with_codec(
+                "/usr/bin/ffmpeg",
+                "libx264",
+                _failing_frames(),
+                tmp_path / "out.mp4",
+                width=64,
+                height=64,
+                fps=24.0,
+            )
+        assert enc_proc.killed is True
+        assert enc_proc.waited is True
+        assert enc_proc.stderr_closed_before_wait is False
+        assert enc_proc.stderr.closed is True
+
+        mp4_path = tmp_path / "corrupt.mp4"
+        mp4_path.write_bytes(b"\x00" * 256)
+        bad_marker_y4m = b"YUV4MPEG2 W64 H64 F24:1 Ip A0:0 C444\nBADMARKER\n"
+        dec_proc = _RunningFakePopen(stdout_payload=bad_marker_y4m)
+        with (
+            patch("subprocess.Popen", return_value=dec_proc),
+            pytest.raises(RuntimeError, match="Invalid Y4M frame marker"),
+        ):
+            verify_mp4_decodable(
+                mp4_path,
+                expected_frames=2,
+                expected_width=64,
+                expected_height=64,
+                ffmpeg_bin="/usr/bin/ffmpeg",
+            )
+        assert dec_proc.killed is True
+        assert dec_proc.waited is True
+        assert dec_proc.stderr_closed_before_wait is False
+        assert dec_proc.stdout.closed is True
+        assert dec_proc.stderr.closed is True
+
+    def test_ffmpeg_pipes_drain_large_concurrent_stderr_without_deadlock(
+        self, tmp_path: Path
+    ) -> None:
+        fake_ff = tmp_path / "fake_ffmpeg.py"
+        fake_ff.write_text(
+            f"#!{sys.executable}\n"
+            "import pathlib, sys\n"
+            "args = sys.argv[1:]\n"
+            "if 'yuv4mpegpipe' in args:\n"
+            "    sys.stderr.buffer.write(b'W' * 300_000 + b'\\ndecode_tail_marker\\n')\n"
+            "    sys.stderr.buffer.flush()\n"
+            "    sys.stdout.buffer.write(b'YUV4MPEG2 W16 H16 F12:1 Ip A0:0 C444\\n')\n"
+            "    sys.stdout.buffer.write(b'FRAME\\n' + b'\\x80' * (16 * 16 * 3))\n"
+            "    sys.stdout.buffer.flush()\n"
+            "    sys.exit(1)\n"
+            "while sys.stdin.buffer.read(4096):\n"
+            "    sys.stderr.buffer.write(b'E' * 65536)\n"
+            "    sys.stderr.buffer.flush()\n"
+            "sys.stderr.buffer.write(b'\\nencode_tail_marker\\n')\n"
+            "sys.stderr.buffer.flush()\n"
+            "pathlib.Path(args[-1]).write_bytes(b'\\x00' * 256)\n"
+            "sys.exit(1)\n",
+            encoding="utf-8",
+        )
+        fake_ff.chmod(fake_ff.stat().st_mode | stat.S_IXUSR)
+
+        rc, stderr_tail = _encode_mp4_with_codec(
+            str(fake_ff),
+            "libx264",
+            iter_deterministic_rgb_frames(32, 32, 8, "verbose_stderr"),
+            tmp_path / "enc.mp4",
+            width=32,
+            height=32,
+            fps=12.0,
+        )
+        assert rc == 1
+        assert len(stderr_tail) <= 4096
+        assert b"encode_tail_marker" in stderr_tail
+
+        mp4_path = tmp_path / "dec.mp4"
+        mp4_path.write_bytes(b"\x00" * 256)
+        with pytest.raises(RuntimeError, match="decode_tail_marker"):
+            verify_mp4_decodable(
+                mp4_path,
+                expected_frames=2,
+                expected_width=16,
+                expected_height=16,
+                expected_fps=12.0,
+                ffmpeg_bin=str(fake_ff),
+            )
 
     @pytest.mark.ffmpeg
     def test_mp4_synthesis_real_ffmpeg_roundtrip(self, tmp_path: Path) -> None:
@@ -699,7 +890,9 @@ class TestDagLoaderMultimodalDeduplicationAndReplay:
         eval_a_img_part = convs["eval-a"].turns[0].raw_messages[1]["content"][0]
         fork_img_part = convs["fork-critic"].turns[0].raw_messages[0]["content"][1]
         assert root_img_part == eval_a_img_part == fork_img_part
-        assert root_img_part["uuid"] == "shared_ref_img"
+        expected_uuid = default_media_uuid(DagMediaSegment.model_validate(shared_img))
+        assert expected_uuid.startswith("shared_ref_img_")
+        assert root_img_part["uuid"] == expected_uuid
 
         session = UserSession(
             x_correlation_id="corr-1",
@@ -1068,3 +1261,248 @@ class TestDagLoaderMultimodalDeduplicationAndReplay:
             convs = loader.load()
             assert len(convs) >= 1
             assert loader.media_staging_summary is None
+
+    def test_default_media_uuid_distinguishes_geometry_and_preserves_explicit_uuid(
+        self, tmp_path: Path
+    ) -> None:
+        rows = [
+            {
+                "session_id": "root",
+                "turns": [
+                    {
+                        "media_segments": [
+                            {
+                                "media_hash": "shared_key",
+                                "kind": "image",
+                                "width": 64,
+                                "height": 64,
+                            },
+                            {
+                                "media_hash": "shared_key",
+                                "kind": "image",
+                                "width": 128,
+                                "height": 128,
+                            },
+                            {
+                                "media_hash": "shared_key",
+                                "kind": "image",
+                                "width": 64,
+                                "height": 64,
+                                "uuid": "explicit-override-uuid",
+                            },
+                        ],
+                        "prompt_spans": [
+                            {
+                                "kind": "media",
+                                "span_id": "s_small",
+                                "tokens": 16,
+                                "media_index": 0,
+                            },
+                            {
+                                "kind": "media",
+                                "span_id": "s_large",
+                                "tokens": 64,
+                                "media_index": 1,
+                            },
+                            {
+                                "kind": "media",
+                                "span_id": "s_explicit",
+                                "tokens": 16,
+                                "media_index": 2,
+                            },
+                        ],
+                        "forks": ["child"],
+                    }
+                ],
+            },
+            {
+                "session_id": "child",
+                "turns": [
+                    {
+                        "media_segments": [
+                            {
+                                "media_hash": "shared_key",
+                                "kind": "image",
+                                "width": 64,
+                                "height": 64,
+                            }
+                        ],
+                        "in_text_tokens": 4,
+                    }
+                ],
+            },
+        ]
+        path = _write_dag(tmp_path, rows, name="uuid_geom.dag.jsonl")
+        convs = {
+            c.session_id: c for c in DagJsonlLoader(path, emit_media_uuid=True).load()
+        }
+        root_parts = convs["root"].turns[0].raw_messages[0]["content"]
+        child_img_part = convs["child"].turns[0].raw_messages[0]["content"][1]
+
+        assert root_parts[0]["uuid"] != root_parts[1]["uuid"]
+        assert root_parts[0]["image_url"]["url"] != root_parts[1]["image_url"]["url"]
+        assert root_parts[2]["uuid"] == "explicit-override-uuid"
+        assert root_parts[0]["uuid"] == child_img_part["uuid"]
+
+    def test_implicit_in_text_tokens_staged_with_population_keys_and_wraps_error(
+        self, tmp_path: Path
+    ) -> None:
+        good_rows = [
+            {
+                "session_id": "alpha",
+                "turns": [{"in_text_tokens": 6}, {"in_text_tokens": 8}],
+            }
+        ]
+        good_path = _write_dag(tmp_path, good_rows, name="in_tok_ok.dag.jsonl")
+        mat = DagMultimodalMaterializer()
+        convs = DagJsonlLoader(good_path, materializer=mat).load()
+        assert ("alpha:0:text", 6) in mat._staged_text
+        assert ("alpha:1:text", 8) in mat._staged_text
+        assert (
+            convs[0].turns[0].raw_messages[0]["content"][0]["text"]
+            == mat._staged_text[("alpha:0:text", 6)]
+        )
+
+        class _EvenOnlyTokenizer:
+            def encode(self, text: str) -> list[int]:
+                return [0, 1] * max(1, len(text.split()))
+
+        bad_rows = [
+            {"session_id": "ok-first", "turns": [{"in_text_tokens": 4}]},
+            {"session_id": "bad-second", "turns": [{"in_text_tokens": 3}]},
+        ]
+        bad_path = _write_dag(tmp_path, bad_rows, name="in_tok_bad.dag.jsonl")
+        loader = DagJsonlLoader(bad_path, tokenizer=_EvenOnlyTokenizer())
+        with pytest.raises(
+            DagLoadError,
+            match="multimodal staging failed.*could not calibrate span 'bad-second:0:text'",
+        ):
+            loader.load()
+        assert loader.media_staging_summary is None
+        assert loader._conversations == {}
+
+    def test_shared_materializer_stays_frozen_after_failed_load_and_clears_staged_cache(
+        self, tmp_path: Path
+    ) -> None:
+        fresh_mat = DagMultimodalMaterializer()
+        bad_conv = DagConversation.model_validate(
+            {
+                "session_id": "bad",
+                "turns": [
+                    {
+                        "media_segments": [
+                            {
+                                "media_hash": "v",
+                                "kind": "video",
+                                "width": 64,
+                                "height": 64,
+                                "num_frames": 2,
+                            }
+                        ]
+                    }
+                ],
+            }
+        )
+        with (
+            patch(
+                "aiperf.dataset.loader.dag_jsonl_media.find_ffmpeg_binary",
+                return_value=None,
+            ),
+            pytest.raises(RuntimeError, match="FFmpeg binary not found"),
+        ):
+            prepare_materializer_for_conversations([bad_conv], materializer=fresh_mat)
+        assert fresh_mat.is_frozen_for_timed_replay is False
+
+        ok_path = _write_dag(
+            tmp_path,
+            [
+                {
+                    "session_id": "ok",
+                    "turns": [
+                        {
+                            "media_segments": [
+                                {
+                                    "media_hash": "img_ok",
+                                    "kind": "image",
+                                    "width": 64,
+                                    "height": 64,
+                                }
+                            ],
+                            "in_text_tokens": 4,
+                        }
+                    ],
+                }
+            ],
+            name="shared_ok.dag.jsonl",
+        )
+        shared_mat = DagMultimodalMaterializer()
+        DagJsonlLoader(ok_path, materializer=shared_mat).load()
+        assert shared_mat.is_frozen_for_timed_replay is True
+        assert shared_mat._staged_uris
+        assert shared_mat._staged_wire_parts
+        assert shared_mat._staged_text
+
+        with (
+            patch(
+                "aiperf.dataset.loader.dag_jsonl_media.find_ffmpeg_binary",
+                return_value=None,
+            ),
+            pytest.raises(RuntimeError, match="FFmpeg binary not found"),
+        ):
+            prepare_materializer_for_conversations([bad_conv], materializer=shared_mat)
+        assert shared_mat.is_frozen_for_timed_replay is True
+
+        shared_mat.clear_staged_cache()
+        assert shared_mat._staged_uris == {}
+        assert shared_mat._staged_wire_parts == {}
+        assert shared_mat._staged_text == {}
+
+    @pytest.mark.asyncio
+    async def test_concurrent_load_async_and_cancellation_serialize_initialization(
+        self, tmp_path: Path
+    ) -> None:
+        rows = [
+            {
+                "session_id": "root",
+                "turns": [
+                    {
+                        "in_text_tokens": 8,
+                        "spawns": ["child-s"],
+                    },
+                    {"in_text_tokens": 6, "forks": ["child-f"]},
+                ],
+            },
+            {"session_id": "child-s", "turns": [{"in_text_tokens": 4}]},
+            {"session_id": "child-f", "turns": [{"in_text_tokens": 4}]},
+        ]
+        path = _write_dag(tmp_path, rows, name="concurrent.dag.jsonl")
+        loader = DagJsonlLoader(path)
+        entered = threading.Event()
+        release = threading.Event()
+        parse_calls = 0
+        orig_parse = loader._parse_lines
+
+        def _slow_parse() -> None:
+            nonlocal parse_calls
+            parse_calls += 1
+            entered.set()
+            release.wait(timeout=5.0)
+            orig_parse()
+
+        with patch.object(loader, "_parse_lines", side_effect=_slow_parse):
+            t1 = asyncio.create_task(loader.load_async())
+            await asyncio.to_thread(entered.wait, 5.0)
+            t2 = asyncio.create_task(loader.load_async())
+            await asyncio.sleep(0)
+            t1.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await t1
+            release.set()
+            convs = await t2
+
+        assert parse_calls == 1
+        by_sid = {c.session_id: c for c in convs}
+        assert len(by_sid["root"].branches) == 2
+        assert len(by_sid["root"].turns[0].branch_ids) == 1
+        assert len(by_sid["root"].turns[1].branch_ids) == 1
+        assert len(by_sid["root"].turns[1].prerequisites) == 1

@@ -406,14 +406,56 @@ def _consume_y4m_frames(stream: Any, frame_bytes: int, path: Path) -> int:
         decoded_frames += 1
 
 
-def _terminate_proc(proc: subprocess.Popen[bytes]) -> bytes:
+_STDERR_TAIL_MAX_BYTES: int = 4096
+
+
+class _StderrTailDrain:
+    """Background reader draining a subprocess ``stderr`` pipe while retaining its tail."""
+
+    def __init__(self, stream: Any, *, max_bytes: int = _STDERR_TAIL_MAX_BYTES) -> None:
+        self._stream = stream
+        self._max_bytes = max_bytes
+        self._buf = bytearray()
+        self._done = False
+        self._thread = threading.Thread(
+            target=self._drain,
+            name="aiperf-ffmpeg-stderr-drain",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _drain(self) -> None:
+        while True:
+            try:
+                chunk = self._stream.read(4096)
+            except (OSError, ValueError):
+                break
+            if not chunk:
+                break
+            self._buf.extend(chunk)
+            if len(self._buf) > self._max_bytes:
+                del self._buf[: len(self._buf) - self._max_bytes]
+
+    def finish(self, timeout: float = 5.0) -> bytes:
+        if not self._done:
+            self._thread.join(timeout=timeout)
+            self._done = True
+        return bytes(self._buf)
+
+
+def _terminate_proc(
+    proc: subprocess.Popen[bytes],
+    stderr_drain: _StderrTailDrain | None = None,
+) -> bytes:
     with contextlib.suppress(OSError):
         proc.kill()
     stderr_data = b""
-    if proc.stderr is not None:
-        with contextlib.suppress(OSError):
+    if stderr_drain is None and proc.stderr is not None:
+        with contextlib.suppress(OSError, ValueError):
             stderr_data = proc.stderr.read()
     proc.wait()
+    if stderr_drain is not None:
+        stderr_data = stderr_drain.finish()
     return stderr_data
 
 
@@ -421,6 +463,7 @@ def _verify_y4m_stream(
     proc: subprocess.Popen[bytes],
     path: Path,
     *,
+    stderr_drain: _StderrTailDrain,
     expected_frames: int,
     expected_width: int,
     expected_height: int,
@@ -429,13 +472,15 @@ def _verify_y4m_stream(
     assert proc.stdout is not None and proc.stderr is not None
     header_line = proc.stdout.readline(1024)
     if not header_line or not header_line.endswith(b"\n"):
-        stderr_msg = _terminate_proc(proc).decode("utf-8", "ignore")[:200]
+        stderr_msg = (
+            _terminate_proc(proc, stderr_drain).decode("utf-8", "ignore").strip()[-200:]
+        )
         raise RuntimeError(
             f"FFmpeg decode produced no valid Y4M header for {path}: {stderr_msg}"
         )
     actual_w, actual_h, actual_fps = _parse_y4m_header(header_line.rstrip(b"\r\n"))
     if (actual_w, actual_h) != (expected_width, expected_height):
-        _terminate_proc(proc)
+        _terminate_proc(proc, stderr_drain)
         raise RuntimeError(
             f"Decoded MP4 dimension mismatch for {path}: got {actual_w}x{actual_h}, "
             f"expected {expected_width}x{expected_height}"
@@ -443,14 +488,14 @@ def _verify_y4m_stream(
     if expected_fps is not None and actual_fps is not None:
         eff_fps = _effective_video_fps(expected_fps)
         if abs(actual_fps - eff_fps) > max(0.02, eff_fps * 0.005):
-            _terminate_proc(proc)
+            _terminate_proc(proc, stderr_drain)
             raise RuntimeError(
                 f"Decoded MP4 frame-rate mismatch for {path}: got {actual_fps:.2f}fps, "
                 f"expected {eff_fps:.2f}fps"
             )
     decoded_frames = _consume_y4m_frames(proc.stdout, actual_w * actual_h * 3, path)
-    stderr_bytes = proc.stderr.read()
     rc = proc.wait()
+    stderr_bytes = stderr_drain.finish()
     return rc, decoded_frames, stderr_bytes
 
 
@@ -492,23 +537,30 @@ def verify_mp4_decodable(
         stderr=subprocess.PIPE,
     )
     assert proc.stdout is not None and proc.stderr is not None
+    stderr_drain = _StderrTailDrain(proc.stderr)
     try:
         rc, decoded_frames, stderr_bytes = _verify_y4m_stream(
             proc,
             path,
+            stderr_drain=stderr_drain,
             expected_frames=expected_frames,
             expected_width=expected_width,
             expected_height=expected_height,
             expected_fps=expected_fps,
         )
     finally:
-        proc.stdout.close()
-        proc.stderr.close()
         if proc.poll() is None:
-            _terminate_proc(proc)
+            _terminate_proc(proc, stderr_drain)
+        else:
+            proc.wait()
+            stderr_drain.finish()
+        with contextlib.suppress(OSError):
+            proc.stdout.close()
+        with contextlib.suppress(OSError):
+            proc.stderr.close()
 
     if rc != 0 or decoded_frames != expected_frames:
-        stderr_snippet = stderr_bytes.decode("utf-8", "ignore")[:200]
+        stderr_snippet = stderr_bytes.decode("utf-8", "ignore").strip()[-200:]
         raise RuntimeError(
             f"FFmpeg decode verification failed for {path} (rc={rc}, "
             f"frames={decoded_frames} vs expected={expected_frames}): {stderr_snippet}"
@@ -559,6 +611,7 @@ def _encode_mp4_with_codec(
         stderr=subprocess.PIPE,
     )
     assert proc.stdin is not None and proc.stderr is not None
+    stderr_drain = _StderrTailDrain(proc.stderr)
     try:
         for frame in frames:
             try:
@@ -567,15 +620,19 @@ def _encode_mp4_with_codec(
                 break
         with contextlib.suppress(BrokenPipeError, OSError):
             proc.stdin.close()
-        stderr_bytes = proc.stderr.read()
         rc = proc.wait()
+        stderr_bytes = stderr_drain.finish()
         return rc, stderr_bytes
     finally:
         with contextlib.suppress(OSError):
             proc.stdin.close()
-        proc.stderr.close()
         if proc.poll() is None:
-            _terminate_proc(proc)
+            _terminate_proc(proc, stderr_drain)
+        else:
+            proc.wait()
+            stderr_drain.finish()
+        with contextlib.suppress(OSError):
+            proc.stderr.close()
 
 
 def write_deterministic_h264_mp4(
@@ -612,29 +669,35 @@ def write_deterministic_h264_mp4(
         f".{path.stem}.{os.getpid()}.{threading.get_ident()}.tmp.mp4"
     )
     errors: list[str] = []
-    for codec in ("libx264", "mpeg4"):
-        frame_iter = iter_deterministic_rgb_frames(w, h, n_frames, segment.media_hash)
-        rc, stderr_bytes = _encode_mp4_with_codec(
-            ff, codec, frame_iter, tmp_path, width=w, height=h, fps=fps
-        )
-        if rc == 0 and tmp_path.is_file():
-            try:
-                verify_mp4_decodable(
-                    tmp_path,
-                    expected_frames=n_frames,
-                    expected_width=w,
-                    expected_height=h,
-                    expected_fps=fps,
-                    ffmpeg_bin=ff,
-                )
-                os.replace(tmp_path, path)
-                return path
-            except RuntimeError as exc:
-                errors.append(f"{codec} verify failed: {exc}")
-        else:
-            stderr_msg = stderr_bytes.decode("utf-8", "ignore")[:160]
-            errors.append(f"{codec} rc={rc}: {stderr_msg}")
+    try:
+        for codec in ("libx264", "mpeg4"):
+            frame_iter = iter_deterministic_rgb_frames(
+                w, h, n_frames, segment.media_hash
+            )
+            rc, stderr_bytes = _encode_mp4_with_codec(
+                ff, codec, frame_iter, tmp_path, width=w, height=h, fps=fps
+            )
+            if rc == 0 and tmp_path.is_file():
+                try:
+                    verify_mp4_decodable(
+                        tmp_path,
+                        expected_frames=n_frames,
+                        expected_width=w,
+                        expected_height=h,
+                        expected_fps=fps,
+                        ffmpeg_bin=ff,
+                    )
+                    os.replace(tmp_path, path)
+                    return path
+                except RuntimeError as exc:
+                    errors.append(f"{codec} verify failed: {exc}")
+            else:
+                stderr_msg = stderr_bytes.decode("utf-8", "ignore").strip()[-160:]
+                errors.append(f"{codec} rc={rc}: {stderr_msg}")
+            tmp_path.unlink(missing_ok=True)
+    except Exception:
         tmp_path.unlink(missing_ok=True)
+        raise
 
     raise RuntimeError(
         f"Failed to encode decodable MP4 for '{segment.media_hash}' ({w}x{h}, {n_frames}f): "
@@ -647,6 +710,16 @@ def _safe_media_stem(media_hash: str, identity_token: str) -> str:
     slug = cleaned or "media"
     digest = hashlib.sha256(identity_token.encode("utf-8")).hexdigest()[:16]
     return f"{slug}_{digest}"
+
+
+def default_media_uuid(segment: DagMediaSegment) -> str:
+    """Derive a deterministic cache UUID from the full normalized ``segment.cache_key``."""
+    kind, media_hash, width, height, eff_fps, num_frames = segment.cache_key
+    identity = (
+        f"{kind}\x1f{media_hash}\x1f{width}\x1f{height}"
+        f"\x1f{eff_fps:.2f}\x1f{num_frames}"
+    )
+    return _safe_media_stem(media_hash, identity)
 
 
 def staged_media_filename(segment: DagMediaSegment) -> str:
@@ -775,11 +848,22 @@ class MediaStagingSummary:
 
 @dataclass(frozen=True, slots=True)
 class _DagRenderSpan:
+    """Normalized internal span descriptor used when rendering turn messages."""
+
     kind: Literal["text", "media"]
+    """Span modality: ``'text'`` synthesizes tokens; ``'media'`` emits media parts."""
+
     span_id: str
+    """Deterministic text seed identifier or fallback ``media_hash`` key."""
+
     tokens: int
+    """Target token budget for ``'text'`` calibration (``0`` for generated media spans)."""
+
     media_index: int | None
+    """Explicit index into ``media_segments``, or ``None`` for hash/sequential lookup."""
+
     role: str
+    """OpenAI message role assigned to the rendered content parts."""
 
 
 def _clone_media_parts(parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -801,7 +885,11 @@ def _build_wire_parts_from_uris(
     video_wire_mode: Literal["video_url", "image_frames"],
     emit_media_uuid: bool,
 ) -> list[dict[str, Any]]:
-    base_uuid = segment.uuid or (segment.media_hash if emit_media_uuid else None)
+    base_uuid = (
+        segment.uuid
+        if segment.uuid is not None
+        else (default_media_uuid(segment) if emit_media_uuid else None)
+    )
     if segment.kind == "image":
         part: dict[str, Any] = {"type": "image_url", "image_url": {"url": uris[0]}}
         if base_uuid is not None:
@@ -866,6 +954,7 @@ class DagMultimodalMaterializer:
         self._verified_files: set[tuple[str, int, int, tuple[Any, ...]]] = set()
         self._text_cache: OrderedDict[tuple[str, int], str] = OrderedDict()
         self._staged_text: dict[tuple[str, int], str] = {}
+        self._stage_lock = threading.RLock()
         self._frozen_for_timed_replay = False
         self.encode_calls_during_timed_replay = 0
 
@@ -873,6 +962,13 @@ class DagMultimodalMaterializer:
     def is_frozen_for_timed_replay(self) -> bool:
         """Whether uncached media synthesis is currently forbidden."""
         return self._frozen_for_timed_replay
+
+    def clear_staged_cache(self) -> None:
+        """Release non-evicting per-load staged URI, wire-part, and text stores."""
+        with self._stage_lock:
+            self._staged_wire_parts.clear()
+            self._staged_uris.clear()
+            self._staged_text.clear()
 
     def set_media_base_url(self, base_url: str | None) -> None:
         """Update the HTTP base URL for staged media and invalidate cached wire dicts."""
@@ -1277,19 +1373,29 @@ class DagMultimodalMaterializer:
             b64 = base64.b64encode(mp4_path.read_bytes()).decode("ascii")
             return f"data:video/mp4;base64,{b64}"
 
-    def stage_turns(self, turns: Iterable[DagTurn]) -> MediaStagingSummary:
+    def _stage_turn_text_spans(self, turn: DagTurn, *, fallback_key: str) -> None:
+        if turn.messages is not None:
+            return
+        for span in self._effective_spans(turn, fallback_key=fallback_key):
+            if span.kind == "text":
+                rendered = self.render_span_text(span.span_id, span.tokens)
+                self._staged_text[(span.span_id, max(1, int(span.tokens)))] = rendered
+
+    def stage_turns(
+        self,
+        turns: Iterable[DagTurn],
+        *,
+        fallback_keys: Iterable[str] | None = None,
+    ) -> MediaStagingSummary:
         """Untimed pre-generation pass across all ``turns`` in a DAG dataset."""
         t0 = time.perf_counter()
         unique_segments: OrderedDict[tuple[Any, ...], DagMediaSegment] = OrderedDict()
         wire_variants: OrderedDict[tuple[Any, ...], DagMediaSegment] = OrderedDict()
         total_refs = 0
+        key_iter = iter(fallback_keys) if fallback_keys is not None else None
         for turn in turns:
-            for span in turn.prompt_spans:
-                if span.kind == "text":
-                    rendered = self.render_span_text(span.span_id, span.tokens)
-                    self._staged_text[(span.span_id, max(1, int(span.tokens)))] = (
-                        rendered
-                    )
+            fb_key = next(key_iter, "turn") if key_iter is not None else "turn"
+            self._stage_turn_text_spans(turn, fallback_key=fb_key)
             for seg in turn.media_segments:
                 total_refs += 1
                 unique_segments.setdefault(seg.cache_key, seg)
@@ -1337,9 +1443,16 @@ class DagMultimodalMaterializer:
             media_base_url=self.media_base_url,
         )
 
-    async def async_stage_turns(self, turns: Iterable[DagTurn]) -> MediaStagingSummary:
+    async def async_stage_turns(
+        self,
+        turns: Iterable[DagTurn],
+        *,
+        fallback_keys: Iterable[str] | None = None,
+    ) -> MediaStagingSummary:
         """Async wrapper running ``stage_turns`` off the asyncio event loop."""
-        return await asyncio.to_thread(self.stage_turns, list(turns))
+        return await asyncio.to_thread(
+            self.stage_turns, turns, fallback_keys=fallback_keys
+        )
 
     def materialize_turn_messages(
         self,
@@ -1481,16 +1594,26 @@ def prepare_materializer_for_conversations(
     if not _has_multimodal_or_structural_turns(conversations):
         return None, None
 
-    all_turns = [turn for conv in conversations for turn in conv.turns]
+    keyed_turns = [
+        (f"{conv.session_id}:{turn_idx}", turn)
+        for conv in conversations
+        for turn_idx, turn in enumerate(conv.turns)
+    ]
+    all_turns = [turn for _, turn in keyed_turns]
+    fallback_keys = [key for key, _ in keyed_turns]
     if materializer is not None:
-        was_frozen = materializer.is_frozen_for_timed_replay
-        materializer.freeze_for_timed_replay(False)
-        try:
-            summary = materializer.stage_turns(all_turns)
-        except Exception:
-            materializer.freeze_for_timed_replay(was_frozen)
-            raise
-        materializer.freeze_for_timed_replay(True)
+        with materializer._stage_lock:
+            was_frozen = materializer.is_frozen_for_timed_replay
+            materializer.freeze_for_timed_replay(False)
+            try:
+                summary = materializer.stage_turns(
+                    all_turns, fallback_keys=fallback_keys
+                )
+            except Exception:
+                if was_frozen:
+                    materializer.freeze_for_timed_replay(True)
+                raise
+            materializer.freeze_for_timed_replay(True)
         return materializer, summary
 
     if media_base_url is not None and media_scratch_dir is None:
@@ -1507,7 +1630,7 @@ def prepare_materializer_for_conversations(
             emit_media_uuid=emit_media_uuid,
             tokenizer=tokenizer,
         )
-        summary = mat.stage_turns(all_turns)
+        summary = mat.stage_turns(all_turns, fallback_keys=fallback_keys)
         mat.freeze_for_timed_replay(True)
         return mat, summary
 
@@ -1519,7 +1642,7 @@ def prepare_materializer_for_conversations(
             emit_media_uuid=emit_media_uuid,
             tokenizer=tokenizer,
         )
-        summary = mat.stage_turns(all_turns)
+        summary = mat.stage_turns(all_turns, fallback_keys=fallback_keys)
         mat.media_scratch_dir = None
         mat.freeze_for_timed_replay(True)
         return mat, summary

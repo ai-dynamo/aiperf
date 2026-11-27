@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -49,13 +50,22 @@ if TYPE_CHECKING:
 __all__ = ["DagJsonlLoader", "DagLoadError"]
 
 
+_MULTI_TURN_MODALITY_KEYS: frozenset[str] = frozenset(
+    {"text", "texts", "image", "images", "audio", "audios", "video", "videos"}
+)
+
+
 def _is_dag_turn_probe(turn_obj: dict[str, Any]) -> bool:
     """Return True when ``turn_obj`` carries any DAG-specific turn indicator."""
+    if not _MULTI_TURN_MODALITY_KEYS.isdisjoint(turn_obj):
+        return False
     if isinstance(turn_obj.get("messages"), list):
         return True
-    if isinstance(turn_obj.get("prompt_spans"), list) or isinstance(
-        turn_obj.get("media_segments"), list
-    ):
+    prompt_spans = turn_obj.get("prompt_spans")
+    if isinstance(prompt_spans, list) and len(prompt_spans) > 0:
+        return True
+    media_segments = turn_obj.get("media_segments")
+    if isinstance(media_segments, list) and len(media_segments) > 0:
         return True
     in_tok = turn_obj.get("in_text_tokens")
     if not isinstance(in_tok, bool) and isinstance(in_tok, int) and in_tok > 0:
@@ -181,6 +191,7 @@ class DagJsonlLoader(BaseFileLoader):
         self._inline_pre_session_spawns: dict[str, list[str]] = {}
         self._roots: set[str] = set()
         self._loaded: bool = False
+        self._load_lock = threading.RLock()
 
     @classmethod
     def can_load(
@@ -190,8 +201,9 @@ class DagJsonlLoader(BaseFileLoader):
 
         DAG lines have top-level ``session_id`` and ``turns`` where at least
         one turn carries a ``messages`` array, structural synthesis fields
-        (``prompt_spans``, ``media_segments``, or positive ``in_text_tokens``),
-        ``forks``, or ``spawns``.
+        (non-empty ``prompt_spans`` / ``media_segments`` or positive
+        ``in_text_tokens``), ``forks``, or ``spawns``, and no turn carries
+        ordinary ``MultiTurn`` modality keys.
         """
         if data is None:
             return False
@@ -205,12 +217,13 @@ class DagJsonlLoader(BaseFileLoader):
         turns = data.get("turns")
         if not isinstance(turns, list) or not turns:
             return False
+        has_dag_turn = False
         for t in turns:
-            if not isinstance(t, dict):
+            if not isinstance(t, dict) or not _MULTI_TURN_MODALITY_KEYS.isdisjoint(t):
                 return False
             if _is_dag_turn_probe(t):
-                return True
-        return False
+                has_dag_turn = True
+        return has_dag_turn
 
     @classmethod
     def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
@@ -226,7 +239,15 @@ class DagJsonlLoader(BaseFileLoader):
 
     def load_dataset(self) -> dict[str, list[Conversation]]:
         """Parse the DAG JSONL file and return session_id -> [Conversation]."""
-        if not self._loaded:
+        with self._load_lock:
+            if self._loaded:
+                return {sid: [conv] for sid, conv in self._conversations.items()}
+            self._conversations.clear()
+            self._inline_forks.clear()
+            self._inline_spawns.clear()
+            self._inline_pre_session_spawns.clear()
+            self._roots.clear()
+            self.media_staging_summary = None
             self._parse_lines()
             self._desugar_forks()
             self._resolve_and_validate()
@@ -250,7 +271,7 @@ class DagJsonlLoader(BaseFileLoader):
             )
             self._delay_cap_tracker.log_summary(logger_name=__name__)
             self._loaded = True
-        return {sid: [conv] for sid, conv in self._conversations.items()}
+            return {sid: [conv] for sid, conv in self._conversations.items()}
 
     def convert_to_conversations(
         self, data: dict[str, list[Conversation]]
@@ -277,9 +298,10 @@ class DagJsonlLoader(BaseFileLoader):
         return await asyncio.to_thread(self.load)
 
     def root_session_ids(self) -> set[str]:
-        if not self._loaded:
-            self.load_dataset()
-        return self._roots
+        with self._load_lock:
+            if not self._loaded:
+                self.load_dataset()
+            return set(self._roots)
 
     # --- Internal parsing ----------------------------------------------------
 

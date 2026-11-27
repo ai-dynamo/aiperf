@@ -202,6 +202,11 @@ class DagPromptSpan(AIPerfBaseModel):
             raise ValueError(
                 f"prompt span '{self.span_id}' has kind='text' so media_index must be omitted"
             )
+        if self.kind == "media" and self.role != "user":
+            raise ValueError(
+                f"prompt span '{self.span_id}' has kind='media' which requires "
+                f"role='user' (got role={self.role!r})"
+            )
         return self
 
 
