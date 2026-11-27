@@ -34,11 +34,13 @@ Both keys can appear on the same turn — the scheduler treats them independentl
 Below is a minimal FORK example (same shape as `tests/fixtures/dag/small.dag.jsonl`).
 Each line is one conversation; the three conversations together describe one tree.
 
+<!-- setup-file-vllm-default-openai-endpoint-server path=tests/fixtures/dag/small.dag.jsonl -->
 ```jsonl
-{"session_id":"root","turns":[{"model":"Qwen3-0.6B","messages":[{"role":"system","content":"You are a careful assistant."},{"role":"user","content":"Please summarize the attached document."}],"max_tokens":128,"forks":["branch-a","branch-b"]}]}
-{"session_id":"branch-a","turns":[{"model":"Qwen3-0.6B","messages":[{"role":"user","content":"Expand on the first section in more detail."},{"role":"user","content":"Add a brief counter-argument."}],"max_tokens":96},{"model":"Qwen3-0.6B","messages":[{"role":"user","content":"Now tighten the expansion."},{"role":"user","content":"Keep the counter-argument intact."}],"max_tokens":64}]}
-{"session_id":"branch-b","turns":[{"model":"Qwen3-0.6B","messages":[{"role":"user","content":"Point out weaknesses in the summary."}],"max_tokens":128},{"model":"Qwen3-0.6B","messages":[{"role":"user","content":"Fold the critique into a revised summary."}],"max_tokens":96}]}
+{"session_id":"root","turns":[{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"system","content":"You are a careful assistant."},{"role":"user","content":"Please summarize the attached document."}],"max_tokens":128,"forks":["branch-a","branch-b"]}]}
+{"session_id":"branch-a","turns":[{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Expand on the first section in more detail."},{"role":"user","content":"Add a brief counter-argument."}],"max_tokens":96},{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Now tighten the expansion."},{"role":"user","content":"Keep the counter-argument intact."}],"max_tokens":64}]}
+{"session_id":"branch-b","turns":[{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Point out weaknesses in the summary."}],"max_tokens":128},{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Fold the critique into a revised summary."}],"max_tokens":96}]}
 ```
+<!-- /setup-file-vllm-default-openai-endpoint-server -->
 
 Shape of the tree:
 
@@ -58,9 +60,10 @@ flowchart TD
 
 Run it against any OpenAI-compatible chat endpoint:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=60 -->
 ```bash
 aiperf profile \
-    --model Qwen3-0.6B \
+    --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
@@ -68,6 +71,7 @@ aiperf profile \
     --custom-dataset-type dag_jsonl \
     --concurrency 1
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 The example file has exactly one root (`root`); `branch-a` and `branch-b` are FORK targets, not roots. The autodefault sets `--num-conversations` to the root count, so `--concurrency` may not exceed `1` here. To exercise concurrency, supply your own multi-root DAG file or pass `--num-conversations N` explicitly. (FORK fanout still produces multiple in-flight requests per session — see the "concurrency" reference section below.)
 

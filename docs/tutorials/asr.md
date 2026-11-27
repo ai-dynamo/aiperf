@@ -35,7 +35,7 @@ To benchmark your own audio files instead, see
 
 ## Start a vLLM Server
 
-Launch vLLM with an audio-capable model such as Qwen2-Audio:
+Launch vLLM with an audio-capable model such as Qwen2.5-Omni:
 
 ```bash
 docker build -t vllm-audio - << 'EOF'
@@ -43,8 +43,9 @@ FROM vllm/vllm-openai:latest
 RUN pip install 'vllm[audio]'
 EOF
 
-docker run --gpus all -p 8000:8000 vllm-audio \
-  --model Qwen/Qwen2-Audio-7B-Instruct \
+docker run --gpus all -p 8000:8000 -e HF_TOKEN vllm-audio \
+  --model Qwen/Qwen2.5-Omni-3B \
+  --enforce-eager \
   --trust-remote-code
 ```
 
@@ -53,7 +54,7 @@ Verify the server is ready:
 ```bash
 curl -s localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"Qwen/Qwen2-Audio-7B-Instruct","messages":[{"role":"user","content":"test"}],"max_tokens":1}'
+  -d '{"model":"Qwen/Qwen2.5-Omni-3B","messages":[{"role":"user","content":"test"}],"max_tokens":1}'
 ```
 
 ---
@@ -62,10 +63,10 @@ curl -s localhost:8000/v1/chat/completions \
 
 LibriSpeech is the standard read-speech benchmark and requires no authentication:
 
-<!-- aiperf-run-vllm-audio-openai-endpoint-server-asr -->
+<!-- aiperf-run-vllm-audio-openai-endpoint-server weight=300 timeout=1800 -->
 ```bash
 aiperf profile \
-    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --model Qwen/Qwen2.5-Omni-3B \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
@@ -73,7 +74,7 @@ aiperf profile \
     --request-count 10 \
     --concurrency 4
 ```
-<!-- /aiperf-run-vllm-audio-openai-endpoint-server-asr -->
+<!-- /aiperf-run-vllm-audio-openai-endpoint-server -->
 
 **Sample Output:**
 
@@ -124,7 +125,7 @@ VoxPopuli contains European Parliament recordings and requires no authentication
 
 ```bash
 aiperf profile \
-    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --model Qwen/Qwen2.5-Omni-3B \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
@@ -141,7 +142,7 @@ AMI contains meeting recordings with individual headset microphone audio and req
 
 ```bash
 aiperf profile \
-    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --model Qwen/Qwen2.5-Omni-3B \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
@@ -161,7 +162,7 @@ HuggingFace account and acceptance of the [dataset terms](https://huggingface.co
 uv run hf auth login
 
 aiperf profile \
-    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --model Qwen/Qwen2.5-Omni-3B \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
@@ -181,7 +182,7 @@ acceptance of the [dataset terms](https://huggingface.co/datasets/kensho/spgispe
 uv run hf auth login
 
 aiperf profile \
-    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --model Qwen/Qwen2.5-Omni-3B \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \

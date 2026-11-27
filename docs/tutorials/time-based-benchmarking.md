@@ -10,15 +10,17 @@ Time-based benchmarking runs for a specific duration rather than a fixed number 
 
 ## Quick Start
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=90 -->
 ```bash
 aiperf profile \
-    --model your-model \
+    --model Qwen/Qwen3-0.6B \
     --url localhost:8000 \
     --endpoint-type chat \
     --streaming \
     --concurrency 10 \
     --benchmark-duration 60
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 Requests are sent continuously until the duration expires. AIPerf then waits for in-flight requests to complete (up to the grace period).
 

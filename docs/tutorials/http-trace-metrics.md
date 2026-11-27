@@ -22,9 +22,16 @@ AIPerf captures detailed timing information throughout the HTTP request lifecycl
 
 To display HTTP trace timing metrics in the console output, use the `--show-trace-timing` flag:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=40 -->
 ```bash
-aiperf profile ... --show-trace-timing
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --url localhost:8000 \
+    --endpoint-type chat \
+    --request-count 20 \
+    --show-trace-timing
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 This displays a separate table with the HTTP trace timing breakdown after the main metrics table.
 

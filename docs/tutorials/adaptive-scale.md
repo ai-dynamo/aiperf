@@ -68,6 +68,7 @@ Do not combine adaptive scale with a fixed ramp on the same variable. For exampl
 
 This example demonstrates adaptive scale discovering a latency boundary against an OpenAI-compatible chat endpoint. Make sure the endpoint is reachable at `localhost:8000`, then tune the `model` and SLA threshold for your service.
 
+<!-- setup-file-vllm-default-openai-endpoint-server path=adaptive-scale-boundary.yaml -->
 ```yaml
 schemaVersion: "2.0"
 
@@ -107,9 +108,11 @@ benchmark:
           p95:
             le: 80
 ```
+<!-- /setup-file-vllm-default-openai-endpoint-server -->
 
 Run it with:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=120 -->
 ```bash
 aiperf profile \
   --config adaptive-scale-boundary.yaml \
@@ -118,6 +121,7 @@ aiperf profile \
   --ui none \
   --output-artifact-dir ./adaptive-scale-boundary-artifacts
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 

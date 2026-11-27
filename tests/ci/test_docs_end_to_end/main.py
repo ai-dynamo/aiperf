@@ -136,8 +136,11 @@ def main():
     servers = md_parser.parse_directory(str(repo_root))
 
     if not servers:
-        logger.warning("No servers found")
-        return 0
+        # Nothing legitimately parses to zero servers: the tags live in the
+        # repository this script resolves its own root from. Discovering none
+        # means the parse failed, not that there is nothing to run.
+        logger.error("No servers found; the docs-e2e suite would test nothing")
+        return 1
 
     logger.info(f"Discovered {len(servers)} servers:")
     for name, server in servers.items():

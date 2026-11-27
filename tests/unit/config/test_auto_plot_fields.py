@@ -10,6 +10,7 @@ C3 (cyclopts plumbing on the v1 ``CLIConfig``) of the auto-plot design.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -91,8 +92,11 @@ def test_auto_plot_quick_start_uses_url_for_server_address() -> None:
     doc = Path("docs/tutorials/auto-plot.md").read_text()
     quick_start = doc.split("## Quick start", 1)[1].split("```", 2)[1]
 
-    assert "--url http://vllm.internal:8000" in quick_start
-    assert "--endpoint http://vllm.internal:8000" not in quick_start
+    # Assert the flag, not the host: guides rewrite the address to stay
+    # executable in CI. What must hold is that the server address rides
+    # ``--url``, since ``--endpoint`` takes a route path, not a base URL.
+    assert re.search(r"--url\s+https?://\S+", quick_start)
+    assert not re.search(r"--endpoint\s+https?://", quick_start)
 
 
 # --- Cyclopts CLI flag plumbing ----------------------------------------------
