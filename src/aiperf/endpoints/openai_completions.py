@@ -31,6 +31,7 @@ class CompletionsEndpoint(BaseEndpoint):
         """
         if len(request_info.turns) != 1:
             raise ValueError("Completions endpoint only supports one turn.")
+        self._reject_raw_messages(request_info)
 
         turn = request_info.turns[0]
         model_endpoint = request_info.model_endpoint

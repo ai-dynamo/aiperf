@@ -126,6 +126,20 @@ class SingleTurn(AIPerfBaseModel):
         default=None,
         description="Per-turn extra fields shallow-merged into the request body at dispatch time. Keys override formatter defaults on collision.",
     )
+    raw_messages: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Pre-formatted OpenAI-compatible messages array. When set, "
+        "these messages are spliced verbatim into the request payload, "
+        "bypassing normal turn-based message construction. Mutually exclusive "
+        "with the text/image/audio/video modality fields. In multi_turn "
+        "datasets each turn's raw_messages accumulate across the conversation "
+        "alongside model responses to preserve prefix-cache efficiency.",
+    )
+    raw_tools: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Pre-formatted OpenAI-compatible tool definitions. When set "
+        "alongside raw_messages, injected into the API payload as the tools field.",
+    )
 
     @model_validator(mode="after")
     def validate_mutually_exclusive_fields(self) -> "SingleTurn":
@@ -166,9 +180,38 @@ class SingleTurn(AIPerfBaseModel):
         return self
 
     @model_validator(mode="after")
+    def validate_raw_messages_fields(self) -> "SingleTurn":
+        """Validate raw_messages/raw_tools shape and mutual exclusivity.
+
+        raw_messages must be a non-empty list of dicts with a non-empty string
+        role, raw_tools requires raw_messages, and raw_messages cannot combine
+        with the turn-based modality fields (which the endpoint would silently
+        drop).
+        """
+        if self.raw_messages is not None:
+            validate_chat_messages(self.raw_messages)
+            for i, msg in enumerate(self.raw_messages):
+                role = msg["role"]
+                if not isinstance(role, str) or not role.strip():
+                    raise ValueError(
+                        f"raw_messages[{i}] 'role' must be a non-empty string"
+                    )
+            if _has_any_modality(self):
+                raise ValueError(
+                    "raw_messages cannot be combined with the text/image/audio/"
+                    "video modality fields; author the full message array in "
+                    "raw_messages instead"
+                )
+        if self.raw_tools is not None and not self.raw_tools:
+            raise ValueError("raw_tools must be a non-empty list")
+        if self.raw_tools is not None and self.raw_messages is None:
+            raise ValueError("raw_tools requires raw_messages to be set")
+        return self
+
+    @model_validator(mode="after")
     def validate_at_least_one_modality(self) -> "SingleTurn":
         """Ensure at least one modality is provided"""
-        if not _has_any_modality(self):
+        if not (_has_any_modality(self) or self.raw_messages):
             raise ValueError("At least one modality must be provided")
         return self
 

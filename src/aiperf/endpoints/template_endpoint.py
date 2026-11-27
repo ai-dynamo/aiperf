@@ -95,6 +95,7 @@ class TemplateEndpoint(BaseEndpoint):
         """
         if not request_info.turns:
             raise ValueError("Template endpoint requires at least one turn.")
+        self._reject_raw_messages(request_info)
 
         turn = request_info.turns[-1]
 
