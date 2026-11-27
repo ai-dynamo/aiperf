@@ -130,6 +130,8 @@ AIPerf's plugin categories are organized by function; the groups below include `
 | `endpoint` | `EndpointType` | API endpoint implementations (chat, completions, embeddings, etc.) |
 | `transport` | `TransportType` | Network transport (HTTP via aiohttp) |
 
+Decision endpoint plugins `decisions` and `systemone` replay complete text evaluation payloads and retain structured non-text responses. Their metadata sets `produces_tokens: false`, `tokenizes_input: false` and `requires_request_payload: true`. The last field opts into retaining the original payload for response validation, even when client tokenization and raw export are disabled. Explicit payload stripping still takes precedence and makes decision validation fail. See [structured decision replay](../tutorials/raw-payload-replay.md#structured-decision-apis) for commands and boundaries.
+
 Finite agentic replay requires an HTTP transport whose `send_request` accepts
 `transport_start_callback` and `transport_eof_callback` as keyword arguments,
 alongside `first_token_callback`. Configuration validation rejects legacy HTTP

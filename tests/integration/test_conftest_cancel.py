@@ -12,8 +12,14 @@ CTRL_BREAK_EVENT — passing SIGINT raises ``ValueError: Unsupported signal: 2``
 
 from __future__ import annotations
 
+import asyncio
 import signal
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
+
+import pytest
+
+from aiperf.common.constants import IS_WINDOWS
+from tests.harness.utils import AIPerfRunnerFn
 
 
 def test_cancel_calls_send_signal_sigint_on_unix() -> None:
@@ -36,3 +42,42 @@ def test_cancel_calls_terminate_on_windows() -> None:
 
     process.terminate.assert_called_once_with()
     process.send_signal.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(IS_WINDOWS, reason="POSIX process-group escalation")
+@pytest.mark.parametrize("timeouts", [1, 2, 3])
+async def test_runner_timeout_escalates_to_process_group(
+    aiperf_runner: AIPerfRunnerFn, timeouts: int
+) -> None:
+    process = MagicMock()
+    process.communicate = AsyncMock(
+        side_effect=[TimeoutError() for _ in range(timeouts)] + [(b"", b"")]
+    )
+    with (
+        patch(
+            "tests.integration.conftest.asyncio.create_subprocess_exec",
+            new_callable=AsyncMock,
+            return_value=process,
+        ) as spawn,
+        patch("tests.integration.conftest._cancel_aiperf_for_timeout") as cancel,
+        patch("tests.integration.conftest._killpg") as killpg,
+        patch(
+            "tests.integration.conftest.asyncio.wait_for", wraps=asyncio.wait_for
+        ) as wait_for,
+        pytest.raises(RuntimeError, match="AIPerf timed out after 120s"),
+    ):
+        await aiperf_runner(["plugins"], 120)
+
+    assert (
+        spawn.call_args.kwargs.get("process_group") == 0
+        or spawn.call_args.kwargs.get("start_new_session") is True
+    )
+    cancel.assert_called_once_with(process)
+    assert killpg.call_args_list == [
+        call(process, sig) for sig in [signal.SIGTERM, signal.SIGKILL][: timeouts - 1]
+    ]
+    assert process.communicate.await_count == min(timeouts + 1, 3)
+    assert [item.kwargs["timeout"] for item in wait_for.call_args_list] == [120] + [
+        5
+    ] * min(timeouts, 2)

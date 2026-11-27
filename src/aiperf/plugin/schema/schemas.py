@@ -256,6 +256,10 @@ class EndpointMetadata(BaseModel):
     produces_tokens: bool = Field(
         ..., description="Whether endpoint produces token-based output."
     )
+    requires_request_payload: bool = Field(
+        default=False,
+        description="Whether response validation requires retained request payload bytes.",
+    )
     supports_cache_bust: bool = Field(
         default=False,
         description=(

@@ -219,6 +219,32 @@ service_manager:
 # One-to-one mapping: exactly one endpoint is selected based on endpoint_type config.
 # =============================================================================
 endpoint:
+  decisions:
+    class: aiperf.endpoints.decisions:OpenAIDecisionsEndpoint
+    description: |
+      OpenAI Decisions text evaluation with exact raw payload replay and structured
+      response validation. Non-streaming and non-token-producing; no native dialect.
+    metadata:
+      endpoint_path: /v1/decisions
+      requires_request_payload: true
+      supports_streaming: false
+      produces_tokens: false
+      tokenizes_input: false
+      metrics_title: Decision Metrics
+
+  systemone:
+    class: aiperf.endpoints.decisions:SystemOneEndpoint
+    description: |
+      Jev System One text evaluation with exact raw payload replay and structured
+      response validation. Non-streaming and non-token-producing.
+    metadata:
+      endpoint_path: /v1/systemone
+      requires_request_payload: true
+      supports_streaming: false
+      produces_tokens: false
+      tokenizes_input: false
+      metrics_title: Decision Metrics
+
   audio_transcription:
     class: aiperf.endpoints.openai_audio_transcription:AudioTranscriptionEndpoint
     description: |
