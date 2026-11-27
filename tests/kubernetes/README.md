@@ -185,6 +185,7 @@ All local settings can be set via CLI (`--k8s-*`) or env var (`K8S_TEST_*`). CLI
 | `--k8s-jobset-version` | `K8S_TEST_JOBSET_VERSION` | JobSet controller version | `v0.8.0` |
 | `--k8s-kueue-version` | `K8S_TEST_KUEUE_VERSION` | Kueue controller version | `v0.10.1` (from `dev/versions.py`) |
 | `--k8s-benchmark-timeout` | `K8S_TEST_BENCHMARK_TIMEOUT` | Benchmark timeout (seconds) | `300` |
+| `--k8s-node-cpu-overcommit` | `K8S_TEST_NODE_CPU_OVERCOMMIT` | Opt-in fake CPU capacity floor (cores) on local Kind nodes so production-sized pod requests schedule on small CI runners; `0` disables. Only nodes with the `kind://` providerID marker are ever patched | `0` (off; the audit CI workflow sets `32`) |
 
 ### GPU tests (`--gpu-*` / `GPU_TEST_*`)
 
