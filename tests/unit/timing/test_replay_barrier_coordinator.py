@@ -3,7 +3,7 @@
 
 import asyncio
 import logging
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pytest import param
@@ -388,7 +388,10 @@ async def test_release_time_deferral_is_expected_not_refused_or_error(
 
 
 @pytest.mark.asyncio
-async def test_paused_releases_retain_ready_pending_for_phase_handoff() -> None:
+@pytest.mark.parametrize("pause_after_completion", [False, True])
+async def test_paused_releases_retain_ready_pending_for_phase_handoff(
+    pause_after_completion: bool,
+) -> None:
     coordinator = ReplayBarrierCoordinator(_metadata())
     coordinator.activate()
     issued: list[str] = []
@@ -398,15 +401,38 @@ async def test_paused_releases_retain_ready_pending_for_phase_handoff() -> None:
         pending_turn,
         lambda: _record_issue(issued, "d"),
     )
-    coordinator.pause_releases()
+    if not pause_after_completion:
+        coordinator.pause_releases()
 
     for name in "abc":
         coordinator.complete(_credit(name))
+    if pause_after_completion:
+        # Completion queued a release, but its task has not run yet.
+        coordinator.pause_releases()
+    assert coordinator.pending_turns_by_root() == {"root": (pending_turn,)}
     await asyncio.sleep(0)
 
     assert issued == []
     assert coordinator.pending_turns("root") == (pending_turn,)
     assert coordinator.pending_turns_by_root() == {"root": (pending_turn,)}
+
+
+@pytest.mark.asyncio
+async def test_cancel_before_queued_release_notifies_refusal_once() -> None:
+    coordinator = ReplayBarrierCoordinator(_metadata())
+    coordinator.activate()
+    issue = AsyncMock(return_value=ChildDispatchResult.ISSUED)
+    on_refused = AsyncMock()
+    await coordinator.submit(_turn("d"), issue, on_refused=on_refused)
+
+    for name in "abc":
+        coordinator.complete(_credit(name))
+    await coordinator.cancel_pending(notify_refused=True)
+    await asyncio.sleep(0)
+
+    issue.assert_not_awaited()
+    on_refused.assert_awaited_once_with()
+    assert coordinator.pending_turns_by_root() == {}
 
 
 @pytest.mark.asyncio
