@@ -126,6 +126,11 @@ class DagMediaSegment(AIPerfBaseModel):
                     f"video segment '{self.media_hash}' requires fps > 0 "
                     f"(got {self.fps})"
                 )
+            if round(float(self.fps), 2) <= 0.0:
+                raise ValueError(
+                    f"video segment '{self.media_hash}' requires fps >= 0.01 "
+                    f"at two-decimal precision (got {self.fps})"
+                )
         return self
 
     @property
@@ -166,10 +171,21 @@ class DagPromptSpan(AIPerfBaseModel):
         le=4096,
         description="Zero-based index into DagTurn.media_segments when kind='media'.",
     )
-    role: Literal["system", "user", "assistant", "tool"] = Field(
+    role: Literal["system", "user", "assistant"] = Field(
         default="user",
         description="OpenAI message role; consecutive spans with matching role merge into one message.",
     )
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def _reject_tool_span_role(cls, v: Any) -> Any:
+        if v == "tool":
+            raise ValueError(
+                "structural DagPromptSpan does not support role='tool' because "
+                "tool-result messages require 'tool_call_id'; author complete "
+                "tool-result messages via DagTurn.messages instead"
+            )
+        return v
 
     @field_validator("tokens", "media_index", mode="before")
     @classmethod
@@ -187,6 +203,16 @@ class DagPromptSpan(AIPerfBaseModel):
                 f"prompt span '{self.span_id}' has kind='text' so media_index must be omitted"
             )
         return self
+
+
+def _has_distinct_media_segments(
+    indices: list[int], segments: list[DagMediaSegment]
+) -> bool:
+    """Return True when ``indices`` resolve to non-identical media descriptors."""
+    if len(indices) <= 1:
+        return False
+    identities = {(*segments[idx].cache_key, segments[idx].uuid) for idx in indices}
+    return len(identities) > 1
 
 
 def _resolve_media_ref_part(
@@ -219,6 +245,11 @@ def _resolve_media_ref_part(
     if not matches:
         raise ValueError(
             f"media_ref media_hash='{ref_hash}' not found in turn media_segments"
+        )
+    if _has_distinct_media_segments(matches, segments):
+        raise ValueError(
+            f"media_ref media_hash='{ref_hash}' is ambiguous across multiple "
+            f"distinct media_segments at indices {matches}; specify 'media_index' explicitly"
         )
 
 
@@ -271,7 +302,14 @@ def _validate_span_media_refs(
                 )
             fallback_idx = span.media_index + 1
         elif span.span_id in by_hash:
-            fallback_idx = by_hash[span.span_id][0] + 1
+            matches = by_hash[span.span_id]
+            if _has_distinct_media_segments(matches, segments):
+                raise ValueError(
+                    f"media prompt span '{span.span_id}' is ambiguous across "
+                    f"multiple distinct media_segments at indices {matches}; "
+                    "specify 'media_index' explicitly"
+                )
+            fallback_idx = matches[0] + 1
         elif fallback_idx < len(segments):
             fallback_idx += 1
         else:
@@ -370,7 +408,8 @@ class DagTurn(AIPerfBaseModel):
     media_segments: list[DagMediaSegment] = Field(
         default_factory=list,
         description="Content-addressed image/video descriptors synthesized "
-        "deterministically at load time. Shared ``media_hash`` entries across "
+        "deterministically at load time. Identical "
+        "``(kind, media_hash, width, height, fps, num_frames)`` entries across "
         "turns or FORK/SPAWN branches materialize to identical media bytes.",
     )
     prompt_spans: list[DagPromptSpan] = Field(

@@ -368,6 +368,13 @@ class CustomDatasetComposer(BaseDatasetComposer):
                 )
             kwargs["multi_turn"] = loader_metadata.multi_turn
 
+        if (
+            self.tokenizer is not None
+            and isinstance(LoaderClass, type)
+            and self._loader_accepts_kwarg(LoaderClass, "tokenizer")
+        ):
+            kwargs["tokenizer"] = self.tokenizer
+
         if self._inline_records is not None:
             self.loader = LoaderClass(
                 inline_records=self._inline_records,

@@ -69,6 +69,35 @@ def test_compute_image_visual_tokens_qwen3_vl_and_qwen2_5_vl() -> None:
     assert q25.framing_overhead_tokens == 2
 
 
+@pytest.mark.parametrize(
+    "sampled_frames,expected_grid_thw,expected_w,expected_h,expected_vis_tokens,expected_capped",
+    [
+        param(32, (16, 40, 72), 1008, 560, 11520, True, id="720p-32f-clip-capped"),
+        param(64, (32, 28, 52), 728, 392, 11648, True, id="720p-64f-clip-capped"),
+    ],
+)  # fmt: skip
+def test_compute_video_visual_tokens_qwen2_5_vl_long_clip_budget(
+    sampled_frames: int,
+    expected_grid_thw: tuple[int, int, int],
+    expected_w: int,
+    expected_h: int,
+    expected_vis_tokens: int,
+    expected_capped: bool,
+) -> None:
+    grid = compute_video_visual_tokens(
+        1280,
+        720,
+        sampled_frames=sampled_frames,
+        model_family="qwen2_5_vl",
+    )
+    assert grid.grid_thw == expected_grid_thw
+    assert grid.resized_width == expected_w
+    assert grid.resized_height == expected_h
+    assert grid.vis_tokens == expected_vis_tokens
+    assert grid.framing_overhead_tokens == 2
+    assert grid.budget_capped is expected_capped
+
+
 def test_smart_resize_image_upscales_tiny_and_downscales_huge() -> None:
     up_w, up_h, up_capped = smart_resize_image(
         32, 32, factor=32, min_pixels=65_536, max_pixels=16_777_216

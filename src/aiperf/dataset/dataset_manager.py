@@ -1013,8 +1013,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         ):
             # Use CUSTOM composer if the dataset is file-backed (FileDataset
             # or any composed/file-source variant exposing a `path`). The
-            # composer auto-infers the format.
-            conversations = self._load_custom_dataset()
+            # composer auto-infers the format; offload blocking file and media
+            # staging I/O from the DatasetManager event loop.
+            conversations = await asyncio.to_thread(self._load_custom_dataset)
         else:
             conversations = self._load_synthetic_dataset()
 

@@ -6,20 +6,23 @@
 Provides content-addressed PNG and H.264 MP4 generation keyed by
 ``(kind, media_hash, width, height, fps, num_frames)``, untimed pre-staging
 across ``FORK`` and ``SPAWN`` branches, optional local HTTP static serving,
-mixed text+media block-hash computation, and zero-leakage trace validation.
+mixed text+media block-hash computation, and heuristic structural trace checks.
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
 import functools
 import hashlib
 import http.server
+import inspect
 import io
 import math
 import os
 import random
+import re
 import shutil
 import socketserver
 import struct
@@ -29,7 +32,7 @@ import threading
 import time
 import zlib
 from collections import OrderedDict
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -40,7 +43,6 @@ from PIL import Image as PILImage
 if TYPE_CHECKING:
     from aiperf.dataset.loader.dag_jsonl_models import (
         DagMediaSegment,
-        DagPromptSpan,
         DagTurn,
     )
 
@@ -128,6 +130,10 @@ ZERO_LEAKAGE_FORBIDDEN_KEYS: frozenset[str] = frozenset(
     }
 )
 
+MAX_STREAMED_VIDEO_RAW_BYTES: int = 8 * 1024 * 1024 * 1024
+MAX_BUFFERED_VIDEO_RAW_BYTES: int = 256 * 1024 * 1024
+_UNSAFE_SLUG_RE = re.compile(r"[^A-Za-z0-9_-]+")
+
 
 def _seed64(*parts: object) -> int:
     joined = "\x1f".join(str(p) for p in parts).encode("utf-8")
@@ -135,7 +141,15 @@ def _seed64(*parts: object) -> int:
 
 
 def validate_dag_zero_leakage(obj: Any, *, path: str = "$") -> None:
-    """Recursively verify that a structural DAG JSON object holds zero raw data."""
+    """Heuristic structural lint rejecting raw-content keys, inline URIs, and long strings.
+
+    Checks that ``obj`` omits common raw-payload keys (such as ``messages`` and
+    ``raw_text``), inline ``data:`` / ``file://`` media URIs, and string values
+    exceeding 256 characters. This helper is a structural guardrail, not a
+    semantic guarantee that opaque fields contain no confidential text; trace
+    authors must supply opaque identifiers for ``session_id``, ``span_id``, and
+    ``media_hash`` and omit source data.
+    """
     if isinstance(obj, dict):
         for key, val in obj.items():
             if key in ZERO_LEAKAGE_FORBIDDEN_KEYS:
@@ -267,16 +281,22 @@ def verify_png_bytes(
             )
 
 
-def synthesize_deterministic_rgb_frames(
+def iter_deterministic_rgb_frames(
     width: int,
     height: int,
     num_frames: int,
     seed_key: str,
-) -> list[np.ndarray]:
-    """Generate ``num_frames`` deterministic ``(height, width, 3)`` uint8 RGB arrays."""
+) -> Iterator[np.ndarray]:
+    """Yield ``num_frames`` deterministic ``(height, width, 3)`` uint8 RGB arrays one at a time."""
     if width <= 0 or height <= 0 or num_frames <= 0:
         raise ValueError(
             f"Video frame geometry must be positive, got {width}x{height} @ {num_frames}f"
+        )
+    total_raw_bytes = width * height * num_frames * 3
+    if total_raw_bytes > MAX_STREAMED_VIDEO_RAW_BYTES:
+        raise ValueError(
+            f"Video segment '{seed_key}' raw RGB stream ({total_raw_bytes} bytes) "
+            f"exceeds safety limit ({MAX_STREAMED_VIDEO_RAW_BYTES} bytes)"
         )
     rng = np.random.default_rng(_seed64("mp4_rgb", seed_key, width, height, num_frames))
     tile = 16
@@ -284,13 +304,27 @@ def synthesize_deterministic_rgb_frames(
     gw = max(2, math.ceil(width / tile))
     base = rng.integers(16, 240, size=(gh, gw, 3), dtype=np.uint8)
     frame0 = np.repeat(np.repeat(base, tile, axis=0), tile, axis=1)[:height, :width, :]
-    frames: list[np.ndarray] = []
     for frame_idx in range(num_frames):
         shifted = np.roll(frame0, shift=(frame_idx * 16) % max(1, width), axis=1)
         if frame_idx % 2 == 1:
             shifted = np.roll(shifted, shift=(frame_idx * 8) % max(1, height), axis=0)
-        frames.append(np.ascontiguousarray(shifted))
-    return frames
+        yield np.ascontiguousarray(shifted)
+
+
+def synthesize_deterministic_rgb_frames(
+    width: int,
+    height: int,
+    num_frames: int,
+    seed_key: str,
+) -> list[np.ndarray]:
+    """Generate a materialized list of ``num_frames`` deterministic RGB arrays for small clips."""
+    total_raw_bytes = width * height * num_frames * 3
+    if total_raw_bytes > MAX_BUFFERED_VIDEO_RAW_BYTES:
+        raise ValueError(
+            f"Buffered RGB synthesis for '{seed_key}' ({total_raw_bytes} bytes) exceeds "
+            f"{MAX_BUFFERED_VIDEO_RAW_BYTES} bytes; use iter_deterministic_rgb_frames instead"
+        )
+    return list(iter_deterministic_rgb_frames(width, height, num_frames, seed_key))
 
 
 def find_ffmpeg_binary() -> str | None:
@@ -307,15 +341,129 @@ def find_ffmpeg_binary() -> str | None:
     return None
 
 
+def _effective_video_fps(fps: float | None) -> float:
+    """Return normalized two-decimal video FPS, defaulting non-positive inputs to 24.00."""
+    if fps is None or fps <= 0.0:
+        return 24.0
+    eff = round(float(fps), 2)
+    if eff <= 0.0:
+        raise ValueError(
+            f"Video FPS {fps} rounds to 0.00 at two-decimal precision; "
+            "supply fps >= 0.01"
+        )
+    return eff
+
+
+def _parse_y4m_header(header_line: bytes) -> tuple[int, int, float | None]:
+    if not header_line.startswith(b"YUV4MPEG2 "):
+        raise RuntimeError(f"Unexpected FFmpeg Y4M stream header: {header_line[:80]!r}")
+    width = 0
+    height = 0
+    fps: float | None = None
+    for token in header_line.decode("ascii", "replace").split()[1:]:
+        if token.startswith("W") and len(token) > 1:
+            width = int(token[1:])
+        elif token.startswith("H") and len(token) > 1:
+            height = int(token[1:])
+        elif token.startswith("F") and ":" in token:
+            num_s, den_s = token[1:].split(":", 1)
+            den = int(den_s)
+            if den > 0:
+                fps = int(num_s) / den
+    if width <= 0 or height <= 0:
+        raise RuntimeError(
+            f"Missing frame geometry in FFmpeg Y4M header: {header_line[:80]!r}"
+        )
+    return width, height, fps
+
+
+def _discard_exact_bytes(stream: Any, num_bytes: int, chunk_size: int = 65536) -> bool:
+    remaining = num_bytes
+    while remaining > 0:
+        chunk = stream.read(min(chunk_size, remaining))
+        if not chunk:
+            return False
+        remaining -= len(chunk)
+    return True
+
+
+def _consume_y4m_frames(stream: Any, frame_bytes: int, path: Path) -> int:
+    decoded_frames = 0
+    while True:
+        marker = stream.readline(1024)
+        if not marker:
+            return decoded_frames
+        if not marker.endswith(b"\n") or not (
+            marker == b"FRAME\n" or marker.startswith(b"FRAME ")
+        ):
+            raise RuntimeError(
+                f"Invalid Y4M frame marker at frame {decoded_frames} for {path}: {marker[:40]!r}"
+            )
+        if not _discard_exact_bytes(stream, frame_bytes):
+            raise RuntimeError(
+                f"Truncated Y4M frame payload at frame {decoded_frames} for {path}"
+            )
+        decoded_frames += 1
+
+
+def _terminate_proc(proc: subprocess.Popen[bytes]) -> bytes:
+    with contextlib.suppress(OSError):
+        proc.kill()
+    stderr_data = b""
+    if proc.stderr is not None:
+        with contextlib.suppress(OSError):
+            stderr_data = proc.stderr.read()
+    proc.wait()
+    return stderr_data
+
+
+def _verify_y4m_stream(
+    proc: subprocess.Popen[bytes],
+    path: Path,
+    *,
+    expected_frames: int,
+    expected_width: int,
+    expected_height: int,
+    expected_fps: float | None,
+) -> tuple[int, int, bytes]:
+    assert proc.stdout is not None and proc.stderr is not None
+    header_line = proc.stdout.readline(1024)
+    if not header_line or not header_line.endswith(b"\n"):
+        stderr_msg = _terminate_proc(proc).decode("utf-8", "ignore")[:200]
+        raise RuntimeError(
+            f"FFmpeg decode produced no valid Y4M header for {path}: {stderr_msg}"
+        )
+    actual_w, actual_h, actual_fps = _parse_y4m_header(header_line.rstrip(b"\r\n"))
+    if (actual_w, actual_h) != (expected_width, expected_height):
+        _terminate_proc(proc)
+        raise RuntimeError(
+            f"Decoded MP4 dimension mismatch for {path}: got {actual_w}x{actual_h}, "
+            f"expected {expected_width}x{expected_height}"
+        )
+    if expected_fps is not None and actual_fps is not None:
+        eff_fps = _effective_video_fps(expected_fps)
+        if abs(actual_fps - eff_fps) > max(0.02, eff_fps * 0.005):
+            _terminate_proc(proc)
+            raise RuntimeError(
+                f"Decoded MP4 frame-rate mismatch for {path}: got {actual_fps:.2f}fps, "
+                f"expected {eff_fps:.2f}fps"
+            )
+    decoded_frames = _consume_y4m_frames(proc.stdout, actual_w * actual_h * 3, path)
+    stderr_bytes = proc.stderr.read()
+    rc = proc.wait()
+    return rc, decoded_frames, stderr_bytes
+
+
 def verify_mp4_decodable(
     path: Path,
     *,
     expected_frames: int,
     expected_width: int,
     expected_height: int,
+    expected_fps: float | None = None,
     ffmpeg_bin: str | None = None,
 ) -> None:
-    """Decode ``path`` via ``ffmpeg`` rawvideo output to verify frame count and size."""
+    """Stream-decode ``path`` via ``ffmpeg`` Y4M output to verify geometry, FPS, and frame count."""
     if not path.is_file() or path.stat().st_size < 128:
         raise RuntimeError(f"Generated MP4 file is missing or truncated: {path}")
     ff = ffmpeg_bin or find_ffmpeg_binary()
@@ -323,41 +471,60 @@ def verify_mp4_decodable(
         raise RuntimeError(
             "Cannot verify MP4 decodability because 'ffmpeg' binary was not found"
         )
-    proc = subprocess.run(
-        [
-            ff,
-            "-v",
-            "error",
-            "-i",
-            str(path),
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "rgb24",
-            "-",
-        ],
-        capture_output=True,
-        check=False,
+    cmd = [
+        ff,
+        "-v",
+        "error",
+        "-i",
+        str(path),
+        "-f",
+        "yuv4mpegpipe",
+        "-pix_fmt",
+        "yuv444p",
+        "-strict",
+        "-1",
+        "-",
+    ]
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
-    expected_bytes = expected_frames * expected_width * expected_height * 3
-    if proc.returncode != 0 or len(proc.stdout) != expected_bytes:
-        stderr_snippet = proc.stderr.decode("utf-8", "ignore")[:200]
+    assert proc.stdout is not None and proc.stderr is not None
+    try:
+        rc, decoded_frames, stderr_bytes = _verify_y4m_stream(
+            proc,
+            path,
+            expected_frames=expected_frames,
+            expected_width=expected_width,
+            expected_height=expected_height,
+            expected_fps=expected_fps,
+        )
+    finally:
+        proc.stdout.close()
+        proc.stderr.close()
+        if proc.poll() is None:
+            _terminate_proc(proc)
+
+    if rc != 0 or decoded_frames != expected_frames:
+        stderr_snippet = stderr_bytes.decode("utf-8", "ignore")[:200]
         raise RuntimeError(
-            f"FFmpeg decode verification failed for {path} (rc={proc.returncode}, "
-            f"bytes={len(proc.stdout)} vs expected={expected_bytes}): {stderr_snippet}"
+            f"FFmpeg decode verification failed for {path} (rc={rc}, "
+            f"frames={decoded_frames} vs expected={expected_frames}): {stderr_snippet}"
         )
 
 
 def _encode_mp4_with_codec(
     ff: str,
     codec: str,
-    raw_payload: bytes,
+    frames: Iterable[np.ndarray],
     out_path: Path,
     *,
     width: int,
     height: int,
     fps: float,
-) -> subprocess.CompletedProcess[bytes]:
+) -> tuple[int, bytes]:
     cmd = [
         ff,
         "-y",
@@ -384,7 +551,31 @@ def _encode_mp4_with_codec(
     if codec == "libx264":
         cmd.extend(["-preset", "ultrafast", "-crf", "23"])
     cmd.extend(["-movflags", "+faststart", str(out_path)])
-    return subprocess.run(cmd, input=raw_payload, capture_output=True, check=False)
+
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    assert proc.stdin is not None and proc.stderr is not None
+    try:
+        for frame in frames:
+            try:
+                proc.stdin.write(memoryview(frame).cast("B"))
+            except (BrokenPipeError, OSError):
+                break
+        with contextlib.suppress(BrokenPipeError, OSError):
+            proc.stdin.close()
+        stderr_bytes = proc.stderr.read()
+        rc = proc.wait()
+        return rc, stderr_bytes
+    finally:
+        with contextlib.suppress(OSError):
+            proc.stdin.close()
+        proc.stderr.close()
+        if proc.poll() is None:
+            _terminate_proc(proc)
 
 
 def write_deterministic_h264_mp4(
@@ -393,11 +584,12 @@ def write_deterministic_h264_mp4(
     *,
     ffmpeg_bin: str | None = None,
 ) -> Path:
-    """Encode a deterministic ``yuv420p`` MP4 for ``segment`` and verify decodability."""
+    """Stream-encode a deterministic ``yuv420p`` MP4 for ``segment`` and verify decodability."""
     path.parent.mkdir(parents=True, exist_ok=True)
     w, h, n_frames = segment.width, segment.height, segment.num_frames
     if w % 2 != 0 or h % 2 != 0:
         raise ValueError(f"yuv420p MP4 requires even dimensions, got {w}x{h}")
+    fps = _effective_video_fps(segment.fps)
     ff = ffmpeg_bin or find_ffmpeg_binary()
     if ff is None:
         raise RuntimeError(
@@ -411,28 +603,28 @@ def write_deterministic_h264_mp4(
             expected_frames=n_frames,
             expected_width=w,
             expected_height=h,
+            expected_fps=fps,
             ffmpeg_bin=ff,
         )
         return path
 
-    fps = max(1.0, float(segment.fps or 24.0))
-    frames = synthesize_deterministic_rgb_frames(w, h, n_frames, segment.media_hash)
-    raw_payload = b"".join(frame.tobytes() for frame in frames)
     tmp_path = path.with_name(
         f".{path.stem}.{os.getpid()}.{threading.get_ident()}.tmp.mp4"
     )
     errors: list[str] = []
     for codec in ("libx264", "mpeg4"):
-        proc = _encode_mp4_with_codec(
-            ff, codec, raw_payload, tmp_path, width=w, height=h, fps=fps
+        frame_iter = iter_deterministic_rgb_frames(w, h, n_frames, segment.media_hash)
+        rc, stderr_bytes = _encode_mp4_with_codec(
+            ff, codec, frame_iter, tmp_path, width=w, height=h, fps=fps
         )
-        if proc.returncode == 0 and tmp_path.is_file():
+        if rc == 0 and tmp_path.is_file():
             try:
                 verify_mp4_decodable(
                     tmp_path,
                     expected_frames=n_frames,
                     expected_width=w,
                     expected_height=h,
+                    expected_fps=fps,
                     ffmpeg_bin=ff,
                 )
                 os.replace(tmp_path, path)
@@ -440,8 +632,8 @@ def write_deterministic_h264_mp4(
             except RuntimeError as exc:
                 errors.append(f"{codec} verify failed: {exc}")
         else:
-            stderr_msg = proc.stderr.decode("utf-8", "ignore")[:160]
-            errors.append(f"{codec} rc={proc.returncode}: {stderr_msg}")
+            stderr_msg = stderr_bytes.decode("utf-8", "ignore")[:160]
+            errors.append(f"{codec} rc={rc}: {stderr_msg}")
         tmp_path.unlink(missing_ok=True)
 
     raise RuntimeError(
@@ -450,15 +642,40 @@ def write_deterministic_h264_mp4(
     )
 
 
+def _safe_media_stem(media_hash: str, identity_token: str) -> str:
+    cleaned = _UNSAFE_SLUG_RE.sub("_", media_hash).strip("._-")[:32]
+    slug = cleaned or "media"
+    digest = hashlib.sha256(identity_token.encode("utf-8")).hexdigest()[:16]
+    return f"{slug}_{digest}"
+
+
 def staged_media_filename(segment: DagMediaSegment) -> str:
-    """Return canonical content-addressed filename for a staged ``DagMediaSegment``."""
+    """Return a filesystem- and URL-safe content-addressed basename for ``segment``."""
     if segment.kind == "image":
-        return f"{segment.media_hash}_{segment.width}x{segment.height}.png"
-    fps_tag = int(round(float(segment.fps))) if segment.fps > 0 else 24
-    return (
-        f"{segment.media_hash}_{segment.width}x{segment.height}_"
-        f"{segment.num_frames}f_{fps_tag}fps.mp4"
+        identity = (
+            f"image\x1f{segment.media_hash}\x1f{segment.width}\x1f{segment.height}"
+        )
+        stem = _safe_media_stem(segment.media_hash, identity)
+        return f"{stem}_{segment.width}x{segment.height}.png"
+    eff_fps = _effective_video_fps(segment.fps)
+    identity = (
+        f"video\x1f{segment.media_hash}\x1f{segment.width}\x1f{segment.height}"
+        f"\x1f{eff_fps:.2f}\x1f{segment.num_frames}"
     )
+    stem = _safe_media_stem(segment.media_hash, identity)
+    return (
+        f"{stem}_{segment.width}x{segment.height}_"
+        f"{segment.num_frames}f_{eff_fps:.2f}fps.mp4"
+    )
+
+
+def staged_frame_filename(segment: DagMediaSegment, frame_idx: int) -> str:
+    """Return a filesystem- and URL-safe basename for one PNG frame of ``segment``."""
+    identity = (
+        f"video_frame\x1f{segment.media_hash}\x1f{segment.width}\x1f{segment.height}"
+    )
+    stem = _safe_media_stem(segment.media_hash, identity)
+    return f"{stem}_f{frame_idx:03d}_{segment.width}x{segment.height}.png"
 
 
 class _QuietStaticHandler(http.server.SimpleHTTPRequestHandler):
@@ -492,6 +709,8 @@ class LocalMediaHttpServer:
             name="aiperf-dag-media-http",
             daemon=True,
         )
+        self._started = False
+        self._closed = False
 
     @property
     def base_url(self) -> str:
@@ -500,14 +719,23 @@ class LocalMediaHttpServer:
 
     def start(self) -> LocalMediaHttpServer:
         """Start serving pre-staged files on the background daemon thread."""
-        self._thread.start()
+        if self._closed:
+            raise RuntimeError("Cannot start a closed LocalMediaHttpServer")
+        if not self._started:
+            self._thread.start()
+            self._started = True
         return self
 
     def close(self) -> None:
-        """Shut down the HTTP server and join its background thread."""
-        self._httpd.shutdown()
+        """Shut down the HTTP server (if started) and release its bound socket."""
+        if self._closed:
+            return
+        self._closed = True
+        if self._started and self._thread.is_alive():
+            self._httpd.shutdown()
         self._httpd.server_close()
-        self._thread.join(timeout=5.0)
+        if self._started:
+            self._thread.join(timeout=5.0)
 
     def __enter__(self) -> LocalMediaHttpServer:
         return self.start()
@@ -530,7 +758,7 @@ class MediaStagingSummary:
     """Total ``DagMediaSegment`` references encountered across all turns/branches."""
 
     deduplicated_references: int
-    """Number of repeated ``media_hash`` references served from the pre-staged cache."""
+    """Number of repeated media-identity references served from the pre-staged cache."""
 
     staged_bytes: int
     """Total on-disk bytes written across unique pre-staged media files."""
@@ -545,13 +773,64 @@ class MediaStagingSummary:
     """HTTP base URL used for URL-mode media parts, or ``None`` for inline data URIs."""
 
 
-def _attach_part_uuid(
-    part: dict[str, Any], segment: DagMediaSegment, *, emit_media_uuid: bool
-) -> dict[str, Any]:
-    part_uuid = segment.uuid or (segment.media_hash if emit_media_uuid else None)
-    if part_uuid is None:
-        return part
-    return {**part, "uuid": part_uuid}
+@dataclass(frozen=True, slots=True)
+class _DagRenderSpan:
+    kind: Literal["text", "media"]
+    span_id: str
+    tokens: int
+    media_index: int | None
+    role: str
+
+
+def _clone_media_parts(parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    cloned: list[dict[str, Any]] = []
+    for part in parts:
+        item = dict(part)
+        if isinstance(item.get("image_url"), dict):
+            item["image_url"] = dict(item["image_url"])
+        if isinstance(item.get("video_url"), dict):
+            item["video_url"] = dict(item["video_url"])
+        cloned.append(item)
+    return cloned
+
+
+def _build_wire_parts_from_uris(
+    uris: tuple[str, ...],
+    segment: DagMediaSegment,
+    *,
+    video_wire_mode: Literal["video_url", "image_frames"],
+    emit_media_uuid: bool,
+) -> list[dict[str, Any]]:
+    base_uuid = segment.uuid or (segment.media_hash if emit_media_uuid else None)
+    if segment.kind == "image":
+        part: dict[str, Any] = {"type": "image_url", "image_url": {"url": uris[0]}}
+        if base_uuid is not None:
+            part["uuid"] = base_uuid
+        return [part]
+    if video_wire_mode == "image_frames":
+        parts: list[dict[str, Any]] = []
+        for idx, uri in enumerate(uris):
+            frame_part: dict[str, Any] = {
+                "type": "image_url",
+                "image_url": {"url": uri},
+            }
+            if base_uuid is not None:
+                frame_part["uuid"] = f"{base_uuid}:f{idx:03d}"
+            parts.append(frame_part)
+        return parts
+    video_part: dict[str, Any] = {"type": "video_url", "video_url": {"url": uris[0]}}
+    if base_uuid is not None:
+        video_part["uuid"] = base_uuid
+    return [video_part]
+
+
+def _file_stat_token(
+    path: Path, sig: tuple[Any, ...]
+) -> tuple[str, int, int, tuple[Any, ...]] | None:
+    if not path.is_file():
+        return None
+    st = path.stat()
+    return (str(path.resolve()), st.st_mtime_ns, st.st_size, sig)
 
 
 class DagMultimodalMaterializer:
@@ -582,14 +861,25 @@ class DagMultimodalMaterializer:
         self._media_cache: OrderedDict[tuple[Any, ...], list[dict[str, Any]]] = (
             OrderedDict()
         )
+        self._staged_wire_parts: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+        self._staged_uris: dict[tuple[Any, ...], tuple[str, ...]] = {}
+        self._verified_files: set[tuple[str, int, int, tuple[Any, ...]]] = set()
         self._text_cache: OrderedDict[tuple[str, int], str] = OrderedDict()
+        self._staged_text: dict[tuple[str, int], str] = {}
         self._frozen_for_timed_replay = False
         self.encode_calls_during_timed_replay = 0
+
+    @property
+    def is_frozen_for_timed_replay(self) -> bool:
+        """Whether uncached media synthesis is currently forbidden."""
+        return self._frozen_for_timed_replay
 
     def set_media_base_url(self, base_url: str | None) -> None:
         """Update the HTTP base URL for staged media and invalidate cached wire dicts."""
         self.media_base_url = base_url.rstrip("/") if base_url else None
         self._media_cache.clear()
+        self._staged_wire_parts.clear()
+        self._staged_uris.clear()
 
     def freeze_for_timed_replay(self, frozen: bool = True) -> None:
         """Forbid any uncached media synthesis while timed benchmarking is active."""
@@ -607,6 +897,8 @@ class DagMultimodalMaterializer:
         """Synthesize deterministic text calibrated to ``num_tokens`` for ``span_id``."""
         target = max(1, int(num_tokens))
         cache_key = (span_id, target)
+        if cache_key in self._staged_text:
+            return self._staged_text[cache_key]
         if cache_key in self._text_cache:
             self._text_cache.move_to_end(cache_key)
             return self._text_cache[cache_key]
@@ -616,35 +908,195 @@ class DagMultimodalMaterializer:
         text = " " + " ".join(words)
 
         if self.tokenizer is not None:
-            text = self._calibrate_with_tokenizer(text, words, target, rng)
+            text = self._calibrate_with_tokenizer(
+                span_id, text, words, target=target, rng=rng
+            )
 
         self._text_cache[cache_key] = text
         if len(self._text_cache) > self._max_cache * 4:
             self._text_cache.popitem(last=False)
         return text
 
+    def _resolve_encode_fn(self) -> Any | None:
+        encode_fn = getattr(self.tokenizer, "encode", None)
+        if encode_fn is None or hasattr(self.tokenizer, "_encode_args"):
+            return encode_fn
+        try:
+            params = inspect.signature(encode_fn).parameters
+        except (TypeError, ValueError):
+            return encode_fn
+        if "add_special_tokens" in params:
+            return functools.partial(encode_fn, add_special_tokens=False)
+        return encode_fn
+
+    @staticmethod
+    def _count_encoded_tokens(encode_fn: Any, candidate: str) -> int:
+        encoded = encode_fn(candidate)
+        ids = encoded.ids if hasattr(encoded, "ids") else encoded
+        return len(ids)
+
+    def _fine_tune_calibrated_text(
+        self,
+        encode_fn: Any,
+        word_pool: list[str],
+        *,
+        lo_cand: str | None,
+        lo_cnt: int,
+        target: int,
+    ) -> str | None:
+        if lo_cand is None:
+            for short_cand in (word_pool[0], "a", "x", "1"):
+                if self._count_encoded_tokens(encode_fn, short_cand) == target:
+                    return short_cand
+            return None
+        gap = target - lo_cnt
+        if 0 < gap <= 16:
+            for pad in range(1, gap + 1):
+                padded = lo_cand + (" a" * pad)
+                if self._count_encoded_tokens(encode_fn, padded) == target:
+                    return padded
+        return None
+
     def _calibrate_with_tokenizer(
         self,
+        span_id: str,
         text: str,
         words: list[str],
+        *,
         target: int,
         rng: random.Random,
     ) -> str:
-        encode_fn = getattr(self.tokenizer, "encode", None)
+        encode_fn = self._resolve_encode_fn()
         if encode_fn is None:
             return text
-        encoded = encode_fn(text)
-        ids = encoded.ids if hasattr(encoded, "ids") else encoded
-        actual = len(ids)
-        if actual > target:
-            words = words[: max(1, len(words) - (actual - target))]
-            return " " + " ".join(words)
-        if actual < target:
-            words.extend(
-                rng.choice(SINGLE_TOKEN_NEUTRAL_WORDS) for _ in range(target - actual)
+        actual = self._count_encoded_tokens(encode_fn, text)
+        if actual == target:
+            return text
+
+        word_pool = list(words)
+        max_words = min(4_194_304, max(target * 8, target + 64))
+        best_count = actual
+
+        def _probe_words(k: int) -> tuple[str, int]:
+            nonlocal best_count
+            while len(word_pool) < k:
+                word_pool.append(rng.choice(SINGLE_TOKEN_NEUTRAL_WORDS))
+            cand = " " + " ".join(word_pool[:k])
+            cnt = self._count_encoded_tokens(encode_fn, cand)
+            if abs(cnt - target) < abs(best_count - target):
+                best_count = cnt
+            return cand, cnt
+
+        lo_k, lo_cand, lo_cnt, hi_k = (
+            self._grow_word_budget(
+                _probe_words,
+                len(word_pool),
+                text,
+                actual,
+                target=target,
+                max_words=max_words,
             )
-            return " " + " ".join(words)
-        return text
+            if actual < target
+            else self._shrink_word_budget(
+                _probe_words, len(word_pool), actual, target=target
+            )
+        )
+        if lo_cnt == target and lo_cand is not None:
+            return lo_cand
+
+        lo_cand, lo_cnt, exact = self._binary_search_word_budget(
+            _probe_words,
+            lo_k,
+            lo_cand,
+            lo_cnt,
+            hi_k=hi_k,
+            target=target,
+        )
+        if exact is not None:
+            return exact
+
+        tuned = self._fine_tune_calibrated_text(
+            encode_fn, word_pool, lo_cand=lo_cand, lo_cnt=lo_cnt, target=target
+        )
+        if tuned is not None:
+            return tuned
+        raise ValueError(
+            f"Tokenizer could not calibrate span '{span_id}' to {target} tokens "
+            f"(closest={best_count} tokens)"
+        )
+
+    @staticmethod
+    def _binary_search_word_budget(
+        probe_fn: Any,
+        lo_k: int | None,
+        lo_cand: str | None,
+        lo_cnt: int,
+        *,
+        hi_k: int | None,
+        target: int,
+    ) -> tuple[str | None, int, str | None]:
+        if lo_k is None or hi_k is None:
+            return lo_cand, lo_cnt, None
+        while hi_k - lo_k > 1:
+            mid = (lo_k + hi_k) // 2
+            cand, cnt = probe_fn(mid)
+            if cnt == target:
+                return lo_cand, lo_cnt, cand
+            if cnt < target:
+                lo_k, lo_cand, lo_cnt = mid, cand, cnt
+            else:
+                hi_k = mid
+        return lo_cand, lo_cnt, None
+
+    @staticmethod
+    def _grow_word_budget(
+        probe_fn: Any,
+        init_k: int,
+        init_cand: str,
+        init_cnt: int,
+        *,
+        target: int,
+        max_words: int,
+    ) -> tuple[int | None, str | None, int, int | None]:
+        k, cnt = init_k, init_cnt
+        lo_k: int | None = k
+        lo_cand: str | None = init_cand
+        lo_cnt = cnt
+        for _ in range(20):
+            if k >= max_words:
+                break
+            est = int(math.ceil(k * target / max(1, cnt)))
+            next_k = min(max_words, max(k + 1, est if est > k else k * 2))
+            cand, cnt = probe_fn(next_k)
+            if cnt == target:
+                return next_k, cand, cnt, next_k
+            if cnt > target:
+                return lo_k, lo_cand, lo_cnt, next_k
+            lo_k, lo_cand, lo_cnt, k = next_k, cand, cnt, next_k
+        return lo_k, lo_cand, lo_cnt, None
+
+    @staticmethod
+    def _shrink_word_budget(
+        probe_fn: Any,
+        init_k: int,
+        init_cnt: int,
+        *,
+        target: int,
+    ) -> tuple[int | None, str | None, int, int | None]:
+        k, cnt = init_k, init_cnt
+        hi_k: int | None = k
+        for _ in range(20):
+            if k <= 1:
+                break
+            est = (k * target) // max(1, cnt)
+            next_k = max(1, min(k - 1, est if est < k else k // 2))
+            cand, cnt = probe_fn(next_k)
+            if cnt == target:
+                return next_k, cand, cnt, next_k
+            if cnt < target:
+                return next_k, cand, cnt, hi_k
+            hi_k, k = next_k, next_k
+        return None, None, 0, hi_k
 
     def stage_media_segment(self, segment: DagMediaSegment) -> list[Path]:
         """Materialize and decode-verify ``segment`` on disk in ``media_scratch_dir``."""
@@ -655,7 +1107,7 @@ class DagMultimodalMaterializer:
             )
         if segment.kind == "image":
             out_path = self.media_scratch_dir / staged_media_filename(segment)
-            self._write_or_verify_png(
+            self._ensure_verified_png(
                 out_path, segment.width, segment.height, segment.media_hash
             )
             return [out_path]
@@ -663,20 +1115,42 @@ class DagMultimodalMaterializer:
         if self.video_wire_mode == "image_frames":
             written: list[Path] = []
             for idx in range(segment.num_frames):
-                frame_name = (
-                    f"{segment.media_hash}_f{idx:03d}_"
-                    f"{segment.width}x{segment.height}.png"
-                )
-                fp = self.media_scratch_dir / frame_name
-                self._write_or_verify_png(
+                fp = self.media_scratch_dir / staged_frame_filename(segment, idx)
+                self._ensure_verified_png(
                     fp, segment.width, segment.height, f"{segment.media_hash}:f{idx}"
                 )
                 written.append(fp)
             return written
 
         mp4_path = self.media_scratch_dir / staged_media_filename(segment)
-        write_deterministic_h264_mp4(mp4_path, segment, ffmpeg_bin=self.ffmpeg_bin)
+        self._ensure_verified_mp4(mp4_path, segment)
         return [mp4_path]
+
+    def _ensure_verified_png(
+        self, out_path: Path, width: int, height: int, seed_key: str
+    ) -> None:
+        sig = ("png", width, height)
+        tok = _file_stat_token(out_path, sig)
+        if tok is not None and tok in self._verified_files:
+            return
+        self._write_or_verify_png(out_path, width, height, seed_key)
+        new_tok = _file_stat_token(out_path, sig)
+        if new_tok is not None:
+            self._verified_files.add(new_tok)
+
+    def _ensure_verified_mp4(self, mp4_path: Path, segment: DagMediaSegment) -> Path:
+        eff_fps = _effective_video_fps(segment.fps)
+        sig = ("mp4", segment.width, segment.height, eff_fps, segment.num_frames)
+        tok = _file_stat_token(mp4_path, sig)
+        if tok is not None and tok in self._verified_files:
+            return mp4_path
+        written = write_deterministic_h264_mp4(
+            mp4_path, segment, ffmpeg_bin=self.ffmpeg_bin
+        )
+        new_tok = _file_stat_token(written, sig)
+        if new_tok is not None:
+            self._verified_files.add(new_tok)
+        return written
 
     @staticmethod
     def _write_or_verify_png(
@@ -685,7 +1159,9 @@ class DagMultimodalMaterializer:
         if not out_path.is_file():
             raw = synth_deterministic_png_bytes(width, height, seed_key)
             verify_png_bytes(raw, expected_width=width, expected_height=height)
-            tmp = out_path.with_name(f".{out_path.name}.{os.getpid()}.tmp")
+            tmp = out_path.with_name(
+                f".{out_path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+            )
             tmp.write_bytes(raw)
             os.replace(tmp, out_path)
             return
@@ -693,53 +1169,87 @@ class DagMultimodalMaterializer:
             out_path.read_bytes(), expected_width=width, expected_height=height
         )
 
-    def render_media_parts(self, segment: DagMediaSegment) -> list[dict[str, Any]]:
-        """Render OpenAI ``image_url`` / ``video_url`` content parts for ``segment``."""
-        wire_key = (
+    def _uri_cache_key(self, segment: DagMediaSegment) -> tuple[Any, ...]:
+        return (
+            *segment.cache_key,
+            self.video_wire_mode,
+            self.media_base_url or "inline",
+        )
+
+    def _wire_cache_key(self, segment: DagMediaSegment) -> tuple[Any, ...]:
+        return (
             *segment.cache_key,
             segment.uuid,
             self.emit_media_uuid,
             self.video_wire_mode,
             self.media_base_url or "inline",
         )
-        if wire_key in self._media_cache:
-            self._media_cache.move_to_end(wire_key)
-            return [dict(p) for p in self._media_cache[wire_key]]
 
-        self._guard_not_frozen(segment.media_hash)
-        parts = self._build_uncached_media_parts(segment)
+    def _put_media_cache(
+        self, wire_key: tuple[Any, ...], parts: list[dict[str, Any]]
+    ) -> None:
         self._media_cache[wire_key] = parts
+        self._media_cache.move_to_end(wire_key)
         if len(self._media_cache) > self._max_cache:
             self._media_cache.popitem(last=False)
-        return [dict(p) for p in parts]
 
-    def _build_uncached_media_parts(
-        self, segment: DagMediaSegment
-    ) -> list[dict[str, Any]]:
-        if segment.kind == "image":
-            uri = self._resolve_image_uri(
+    def render_media_parts(self, segment: DagMediaSegment) -> list[dict[str, Any]]:
+        """Render OpenAI ``image_url`` / ``video_url`` content parts for ``segment``."""
+        wire_key = self._wire_cache_key(segment)
+        if wire_key in self._staged_wire_parts:
+            return _clone_media_parts(self._staged_wire_parts[wire_key])
+        if wire_key in self._media_cache:
+            self._media_cache.move_to_end(wire_key)
+            return _clone_media_parts(self._media_cache[wire_key])
+
+        uri_key = self._uri_cache_key(segment)
+        if uri_key in self._staged_uris:
+            parts = _build_wire_parts_from_uris(
+                self._staged_uris[uri_key],
                 segment,
-                seed_key=segment.media_hash,
-                filename=staged_media_filename(segment),
+                video_wire_mode=self.video_wire_mode,
+                emit_media_uuid=self.emit_media_uuid,
             )
-            part = {"type": "image_url", "image_url": {"url": uri}}
-            return [
-                _attach_part_uuid(part, segment, emit_media_uuid=self.emit_media_uuid)
-            ]
+            self._put_media_cache(wire_key, parts)
+            return _clone_media_parts(parts)
 
+        self._guard_not_frozen(segment.media_hash)
+        uris = self._compute_segment_uris(segment)
+        parts = _build_wire_parts_from_uris(
+            uris,
+            segment,
+            video_wire_mode=self.video_wire_mode,
+            emit_media_uuid=self.emit_media_uuid,
+        )
+        self._put_media_cache(wire_key, parts)
+        return _clone_media_parts(parts)
+
+    def _compute_segment_uris(self, segment: DagMediaSegment) -> tuple[str, ...]:
+        if segment.kind == "image":
+            return (
+                self._resolve_image_uri(
+                    segment,
+                    seed_key=segment.media_hash,
+                    filename=staged_media_filename(segment),
+                ),
+            )
         if self.video_wire_mode == "image_frames":
-            return self._render_video_as_frame_parts(segment)
-
-        uri = self._resolve_video_mp4_uri(segment)
-        part = {"type": "video_url", "video_url": {"url": uri}}
-        return [_attach_part_uuid(part, segment, emit_media_uuid=self.emit_media_uuid)]
+            return tuple(
+                self._resolve_image_uri(
+                    segment,
+                    seed_key=f"{segment.media_hash}:f{idx}",
+                    filename=staged_frame_filename(segment, idx),
+                )
+                for idx in range(segment.num_frames)
+            )
+        return (self._resolve_video_mp4_uri(segment),)
 
     def _resolve_image_uri(
         self, segment: DagMediaSegment, *, seed_key: str, filename: str
     ) -> str:
         if self.media_scratch_dir is not None:
             out_path = self.media_scratch_dir / filename
-            self._write_or_verify_png(out_path, segment.width, segment.height, seed_key)
+            self._ensure_verified_png(out_path, segment.width, segment.height, seed_key)
             if self.media_base_url is not None:
                 return f"{self.media_base_url}/{filename}"
             b64 = base64.b64encode(out_path.read_bytes()).decode("ascii")
@@ -750,31 +1260,11 @@ class DagMultimodalMaterializer:
         )
         return f"data:image/png;base64,{base64.b64encode(raw).decode('ascii')}"
 
-    def _render_video_as_frame_parts(
-        self, segment: DagMediaSegment
-    ) -> list[dict[str, Any]]:
-        parts: list[dict[str, Any]] = []
-        base_uuid = segment.uuid or (
-            segment.media_hash if self.emit_media_uuid else None
-        )
-        for idx in range(segment.num_frames):
-            fname = (
-                f"{segment.media_hash}_f{idx:03d}_{segment.width}x{segment.height}.png"
-            )
-            uri = self._resolve_image_uri(
-                segment, seed_key=f"{segment.media_hash}:f{idx}", filename=fname
-            )
-            part: dict[str, Any] = {"type": "image_url", "image_url": {"url": uri}}
-            if base_uuid is not None:
-                part["uuid"] = f"{base_uuid}:f{idx:03d}"
-            parts.append(part)
-        return parts
-
     def _resolve_video_mp4_uri(self, segment: DagMediaSegment) -> str:
         fname = staged_media_filename(segment)
         if self.media_scratch_dir is not None:
-            mp4_path = write_deterministic_h264_mp4(
-                self.media_scratch_dir / fname, segment, ffmpeg_bin=self.ffmpeg_bin
+            mp4_path = self._ensure_verified_mp4(
+                self.media_scratch_dir / fname, segment
             )
             if self.media_base_url is not None:
                 return f"{self.media_base_url}/{mp4_path.name}"
@@ -791,14 +1281,19 @@ class DagMultimodalMaterializer:
         """Untimed pre-generation pass across all ``turns`` in a DAG dataset."""
         t0 = time.perf_counter()
         unique_segments: OrderedDict[tuple[Any, ...], DagMediaSegment] = OrderedDict()
+        wire_variants: OrderedDict[tuple[Any, ...], DagMediaSegment] = OrderedDict()
         total_refs = 0
         for turn in turns:
             for span in turn.prompt_spans:
                 if span.kind == "text":
-                    self.render_span_text(span.span_id, span.tokens)
+                    rendered = self.render_span_text(span.span_id, span.tokens)
+                    self._staged_text[(span.span_id, max(1, int(span.tokens)))] = (
+                        rendered
+                    )
             for seg in turn.media_segments:
                 total_refs += 1
                 unique_segments.setdefault(seg.cache_key, seg)
+                wire_variants.setdefault((*seg.cache_key, seg.uuid), seg)
 
         unique_images = 0
         unique_videos = 0
@@ -807,11 +1302,25 @@ class DagMultimodalMaterializer:
             if self.media_scratch_dir is not None:
                 paths = self.stage_media_segment(seg)
                 staged_bytes += sum(p.stat().st_size for p in paths if p.is_file())
-            self.render_media_parts(seg)
+            uri_key = self._uri_cache_key(seg)
+            if uri_key not in self._staged_uris:
+                self._staged_uris[uri_key] = self._compute_segment_uris(seg)
             if seg.kind == "image":
                 unique_images += 1
             else:
                 unique_videos += 1
+
+        for variant in wire_variants.values():
+            uris = self._staged_uris[self._uri_cache_key(variant)]
+            parts = _build_wire_parts_from_uris(
+                uris,
+                variant,
+                video_wire_mode=self.video_wire_mode,
+                emit_media_uuid=self.emit_media_uuid,
+            )
+            wire_key = self._wire_cache_key(variant)
+            self._staged_wire_parts[wire_key] = parts
+            self._put_media_cache(wire_key, parts)
 
         return MediaStagingSummary(
             unique_images=unique_images,
@@ -827,6 +1336,10 @@ class DagMultimodalMaterializer:
             ),
             media_base_url=self.media_base_url,
         )
+
+    async def async_stage_turns(self, turns: Iterable[DagTurn]) -> MediaStagingSummary:
+        """Async wrapper running ``stage_turns`` off the asyncio event loop."""
+        return await asyncio.to_thread(self.stage_turns, list(turns))
 
     def materialize_turn_messages(
         self,
@@ -871,28 +1384,35 @@ class DagMultimodalMaterializer:
         return resolved
 
     @staticmethod
-    def _effective_spans(turn: DagTurn, *, fallback_key: str) -> list[DagPromptSpan]:
+    def _effective_spans(turn: DagTurn, *, fallback_key: str) -> list[_DagRenderSpan]:
         if turn.prompt_spans:
-            return list(turn.prompt_spans)
-        from aiperf.dataset.loader.dag_jsonl_models import DagPromptSpan
-
-        spans: list[DagPromptSpan] = []
+            return [
+                _DagRenderSpan(
+                    kind=s.kind,
+                    span_id=s.span_id,
+                    tokens=s.tokens,
+                    media_index=s.media_index,
+                    role=s.role,
+                )
+                for s in turn.prompt_spans
+            ]
+        spans: list[_DagRenderSpan] = []
         if turn.in_text_tokens and turn.in_text_tokens > 0:
             spans.append(
-                DagPromptSpan(
+                _DagRenderSpan(
                     kind="text",
                     span_id=f"{fallback_key}:text",
                     tokens=turn.in_text_tokens,
+                    media_index=None,
                     role="user",
                 )
             )
         for idx, seg in enumerate(turn.media_segments):
-            est_tokens = (seg.vis_tokens or 256) + seg.framing_tokens
             spans.append(
-                DagPromptSpan(
+                _DagRenderSpan(
                     kind="media",
                     span_id=seg.media_hash,
-                    tokens=max(1, est_tokens),
+                    tokens=0,
                     media_index=idx,
                     role="user",
                 )
@@ -901,7 +1421,7 @@ class DagMultimodalMaterializer:
 
     def _messages_from_spans(
         self,
-        spans: list[DagPromptSpan],
+        spans: list[_DagRenderSpan],
         segments: list[DagMediaSegment],
     ) -> list[dict[str, Any]]:
         by_hash: dict[str, int] = {}
@@ -963,7 +1483,13 @@ def prepare_materializer_for_conversations(
 
     all_turns = [turn for conv in conversations for turn in conv.turns]
     if materializer is not None:
-        summary = materializer.stage_turns(all_turns)
+        was_frozen = materializer.is_frozen_for_timed_replay
+        materializer.freeze_for_timed_replay(False)
+        try:
+            summary = materializer.stage_turns(all_turns)
+        except Exception:
+            materializer.freeze_for_timed_replay(was_frozen)
+            raise
         materializer.freeze_for_timed_replay(True)
         return materializer, summary
 
@@ -997,3 +1523,26 @@ def prepare_materializer_for_conversations(
         mat.media_scratch_dir = None
         mat.freeze_for_timed_replay(True)
         return mat, summary
+
+
+async def async_prepare_materializer_for_conversations(
+    conversations: list[Any],
+    *,
+    materializer: DagMultimodalMaterializer | None = None,
+    media_scratch_dir: Path | None = None,
+    media_base_url: str | None = None,
+    video_wire_mode: Literal["video_url", "image_frames"] = "video_url",
+    emit_media_uuid: bool = False,
+    tokenizer: Any | None = None,
+) -> tuple[DagMultimodalMaterializer | None, MediaStagingSummary | None]:
+    """Async wrapper running ``prepare_materializer_for_conversations`` off the event loop."""
+    return await asyncio.to_thread(
+        prepare_materializer_for_conversations,
+        conversations,
+        materializer=materializer,
+        media_scratch_dir=media_scratch_dir,
+        media_base_url=media_base_url,
+        video_wire_mode=video_wire_mode,
+        emit_media_uuid=emit_media_uuid,
+        tokenizer=tokenizer,
+    )

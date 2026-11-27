@@ -511,6 +511,40 @@ class TestExplicitCustomDatasetType:
 
         composer.create_dataset()
         assert isinstance(composer.loader, DagJsonlLoader)
+        assert composer.loader._tokenizer is mock_tokenizer
+
+    def test_dag_jsonl_forwards_tokenizer_for_structural_span_calibration(
+        self, tmp_path, mock_tokenizer
+    ):
+        def _two_tokens_per_long_word(text: str, **kwargs) -> list[int]:
+            out: list[int] = []
+            for idx, word in enumerate(text.split()):
+                out.append(idx * 2)
+                if len(word) > 1:
+                    out.append(idx * 2 + 1)
+            return out
+
+        mock_tokenizer.encode = Mock(side_effect=_two_tokens_per_long_word)
+        jsonl = tmp_path / "calibrated.dag.jsonl"
+        jsonl.write_text(
+            '{"session_id": "root", "turns": ['
+            '{"prompt_spans": [{"kind": "text", "span_id": "s0", "tokens": 6, "role": "user"}], "max_tokens": 16},'
+            '{"in_text_tokens": 5, "max_tokens": 16}'
+            "]}\n"
+        )
+        cli_config = CLIConfig(
+            model_names=["test-model"],
+            input_file=str(jsonl),
+        )
+        composer = CustomDatasetComposer(
+            run=make_run(cli_config), tokenizer=mock_tokenizer
+        )
+        convs = composer.create_dataset()
+        assert len(convs) == 1
+        turn0_text = convs[0].turns[0].raw_messages[0]["content"][0]["text"]
+        turn1_text = convs[0].turns[1].raw_messages[0]["content"][0]["text"]
+        assert len(mock_tokenizer.encode(turn0_text)) == 6
+        assert len(mock_tokenizer.encode(turn1_text)) == 5
 
     def test_random_pool_routes_to_random_pool_loader(self, tmp_path, mock_tokenizer):
         """`--custom-dataset-type random-pool` must produce a RandomPoolDatasetLoader."""

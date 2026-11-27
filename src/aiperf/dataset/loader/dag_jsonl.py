@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -46,6 +47,20 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 __all__ = ["DagJsonlLoader", "DagLoadError"]
+
+
+def _is_dag_turn_probe(turn_obj: dict[str, Any]) -> bool:
+    """Return True when ``turn_obj`` carries any DAG-specific turn indicator."""
+    if isinstance(turn_obj.get("messages"), list):
+        return True
+    if isinstance(turn_obj.get("prompt_spans"), list) or isinstance(
+        turn_obj.get("media_segments"), list
+    ):
+        return True
+    in_tok = turn_obj.get("in_text_tokens")
+    if not isinstance(in_tok, bool) and isinstance(in_tok, int) and in_tok > 0:
+        return True
+    return "forks" in turn_obj or "spawns" in turn_obj
 
 
 def _resolve_delay_cap_seconds(run: BenchmarkRun | None) -> float | None:
@@ -175,7 +190,8 @@ class DagJsonlLoader(BaseFileLoader):
 
         DAG lines have top-level ``session_id`` and ``turns`` where at least
         one turn carries a ``messages`` array, structural synthesis fields
-        (``prompt_spans`` / ``media_segments``), ``forks``, or ``spawns``.
+        (``prompt_spans``, ``media_segments``, or positive ``in_text_tokens``),
+        ``forks``, or ``spawns``.
         """
         if data is None:
             return False
@@ -192,13 +208,7 @@ class DagJsonlLoader(BaseFileLoader):
         for t in turns:
             if not isinstance(t, dict):
                 return False
-            if isinstance(t.get("messages"), list):
-                return True
-            if isinstance(t.get("prompt_spans"), list) or isinstance(
-                t.get("media_segments"), list
-            ):
-                return True
-            if "forks" in t or "spawns" in t:
+            if _is_dag_turn_probe(t):
                 return True
         return False
 
@@ -258,6 +268,14 @@ class DagJsonlLoader(BaseFileLoader):
         data = self.load_dataset()
         return self.convert_to_conversations(data)
 
+    async def load_dataset_async(self) -> dict[str, list[Conversation]]:
+        """Parse and stage the DAG JSONL file off the event loop."""
+        return await asyncio.to_thread(self.load_dataset)
+
+    async def load_async(self) -> list[Conversation]:
+        """Async standalone helper offloading file and media staging I/O."""
+        return await asyncio.to_thread(self.load)
+
     def root_session_ids(self) -> set[str]:
         if not self._loaded:
             self.load_dataset()
@@ -295,7 +313,7 @@ class DagJsonlLoader(BaseFileLoader):
                 emit_media_uuid=self._emit_media_uuid,
                 tokenizer=self._tokenizer,
             )
-        except (ValueError, RuntimeError) as e:
+        except (ValueError, RuntimeError, OSError) as e:
             raise DagLoadError(f"{prefix}: multimodal staging failed: {e}") from e
         self.media_staging_summary = summary
         for dag_conv in parsed_convs:

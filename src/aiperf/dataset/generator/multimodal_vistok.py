@@ -3,10 +3,16 @@
 
 """Visual-token-aware media geometry calculator for multimodal VLM benchmarks.
 
-Implements exact ViT patch-grid and spatial/temporal token-merge geometry
-matching open-source VLM preprocessors (such as HuggingFace ``Qwen3VLProcessor``
-and ``Qwen2_5_VLProcessor``) so trace-driven multimodal benchmarks can calibrate
-synthetic image and video dimensions to recorded visual token counts.
+Implements ViT patch-grid and spatial/temporal token-merge geometry for
+trace-driven multimodal benchmarks so synthetic image and video dimensions can
+be calibrated to recorded visual token counts:
+
+- Single-image smart resize matches HuggingFace ``Qwen3VLProcessor`` and
+  ``Qwen2_5_VLProcessor`` per-image ``min_pixels`` / ``max_pixels`` bounds.
+- Video smart resize enforces clip-total ``video_min_pixels`` and
+  ``video_max_pixels`` bounds over ``padded_frames * height * width``, with an
+  optional ``per_frame_max_pixels`` cap when modeling processors that clamp
+  each frame independently.
 """
 
 from __future__ import annotations
@@ -39,10 +45,10 @@ class VisionTokenizerSpec:
     """Maximum pixel budget (height * width) for single-image smart resize."""
 
     video_min_pixels: int
-    """Minimum total pixel budget (frames * height * width) for video resize."""
+    """Minimum clip-total pixel budget (``padded_frames * height * width``) for video resize."""
 
     video_max_pixels: int
-    """Maximum total pixel budget (frames * height * width) for video resize."""
+    """Maximum clip-total pixel budget (``padded_frames * height * width``) for video resize."""
 
     per_frame_max_pixels: int | None = None
     """Optional additional per-frame pixel cap applied alongside ``video_max_pixels``."""
@@ -77,6 +83,12 @@ QWEN3_VL_SPEC = VisionTokenizerSpec(
     video_fixed_framing_tokens=0,
 )
 
+# Uses the qwen-vl-utils clip-total video budget (24_576 * 28 * 28 = 19_267_584,
+# capping merged video visual tokens at <= 12_288 across padded frames) and a
+# clip-total floor of 4 * 28 * 28 = 3_136 pixels. Standalone HuggingFace
+# Qwen2_5_VLVideoProcessor without qwen-vl-utils instead applies a per-frame
+# longest_edge=602_112 (768 * 28 * 28); pass VisionTokenizerSpec(...,
+# per_frame_max_pixels=602_112) when calibrating against that per-frame cap.
 QWEN2_5_VL_SPEC = VisionTokenizerSpec(
     family="qwen2_5_vl",
     patch_size=14,
