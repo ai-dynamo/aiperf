@@ -114,6 +114,14 @@ _BENCHMARK_DATASETS = [
         True,
         id="lcb_codegeneration",
     ),
+    param(
+        "fjzzq2002/impossible_livecodebench",
+        None,
+        "conflicting",
+        ["task_id", "prompt", "test", "entry_point"],
+        False,
+        id="impossible_lcb",
+    ),
 ]
 
 # Module names of all benchmarks covered above (derived from param ids).

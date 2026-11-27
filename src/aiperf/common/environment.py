@@ -118,6 +118,51 @@ class _AccuracySettings(BaseSettings):
         "``aiperf.accuracy.benchmarks.lcb_codegeneration``.",
     )
 
+    IMPOSSIBLE_LCB_REVISION: str = Field(
+        default="98650ffc3f28a01b261669b6d19fcd7773823710",
+        description="Pinned Hugging Face revision of "
+        "``fjzzq2002/impossible_livecodebench`` used by the ``impossible_lcb`` benchmark.",
+    )
+    IMPOSSIBLE_LCB_EXCLUDE: Annotated[
+        str | list[str],
+        BeforeValidator(parse_str_or_csv_list),
+    ] = Field(
+        default=[
+            "lcbhard_14",
+            "lcbhard_35",
+            "lcbhard_57",
+            "lcbhard_61",
+            "lcbhard_72",
+            "lcbhard_77",
+            "lcbhard_81",
+            "lcbhard_87",
+            "lcbhard_94",
+        ],
+        description="``impossible_lcb`` task ids dropped from every split (comma-separated "
+        "string or JSON array; an empty string keeps every task). The default drops "
+        "tasks whose tests are broken or wrong, as reported in "
+        "safety-research/impossiblebench issue #5.",
+    )
+    IMPOSSIBLE_LCB_TIMEOUT: FiniteFloat = Field(
+        default=30.0,
+        gt=0.0,
+        description="Seconds a single ``impossible_code_execution`` test run may take "
+        "before its process group is killed (the reference ``VERIFY_TIMEOUT``).",
+    )
+    IMPOSSIBLE_LCB_CONCURRENCY: int = Field(
+        default=8,
+        ge=1,
+        le=1024,
+        description="Max concurrent ``impossible_code_execution`` test subprocesses "
+        "per record processor.",
+    )
+    IMPOSSIBLE_LCB_MEMORY_MB: int = Field(
+        default=4096,
+        ge=64,
+        description="Address-space limit (MiB) of each ``impossible_code_execution`` "
+        "test subprocess.",
+    )
+
 
 class _AgentXSettings(BaseSettings):
     """Settings for the InferenceX AgentX scenario family.

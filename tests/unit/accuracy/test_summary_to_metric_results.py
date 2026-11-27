@@ -89,3 +89,43 @@ class TestToMetricResults:
             overall_unparsed=0,
         )
         assert empty.to_metric_results() == []
+
+
+class TestToMetricResultsGraderErrors:
+    def test_grader_error_tags_appended_after_unparsed_in_sorted_order(self) -> None:
+        summary = _make_summary().model_copy(
+            update={
+                "overall_grader_errors": 2,
+                "per_task": {
+                    "history": TaskAccuracyStats(
+                        total=5,
+                        passed=5,
+                        unparsed=0,
+                        accuracy_rate=1.0,
+                        unparsed_rate=0.0,
+                    ),
+                    "algebra": TaskAccuracyStats(
+                        total=5,
+                        passed=3,
+                        unparsed=1,
+                        accuracy_rate=0.6,
+                        unparsed_rate=0.2,
+                        grader_errors=2,
+                        grader_error_rate=0.4,
+                    ),
+                },
+            }
+        )
+
+        results = summary.to_metric_results()
+
+        assert [r.tag for r in results][-3:] == [
+            "accuracy.grader_error",
+            "accuracy.grader_error.task.algebra",
+            "accuracy.grader_error.task.history",
+        ]
+        overall, algebra, history = results[-3:]
+        assert (overall.sum, overall.count, overall.current) == (2, 10, 0.2)
+        assert (algebra.sum, algebra.count, algebra.current) == (2, 5, 0.4)
+        assert (history.sum, history.current) == (0, 0.0)
+        assert overall.console_group == MetricConsoleGroup.NONE

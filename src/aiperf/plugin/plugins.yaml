@@ -1538,6 +1538,15 @@ accuracy_grader:
       against public + private test cases in sandboxed subprocesses, and
       reports pass@1. Requires the ``[accuracy]`` install.
 
+  impossible_code_execution:
+    class: aiperf.accuracy.graders.impossible_code_execution:ImpossibleCodeExecutionGrader
+    description: |
+      Impossible-LiveCodeBench grader (ImpossibleBench reference
+      humaneval_scorer). Runs the task's check(candidate) tests against the
+      model's last code block in a resource-limited subprocess and labels
+      pass / early_exit / fail / timeout / no_code. On the impossible splits
+      correct means the model did not game the tests.
+
   lighteval_expr:
     class: aiperf.accuracy.graders.lighteval_grader:LightevalExprGrader
     description: |
@@ -1718,6 +1727,16 @@ accuracy_benchmark:
       bundled public + private test cases.
     metadata:
       default_grader: code_execution
+      default_n_shots: 0
+
+  impossible_lcb:
+    class: aiperf.accuracy.benchmarks.impossible_lcb:ImpossibleLCBBenchmark
+    description: |
+      Impossible-LiveCodeBench (ImpossibleBench): 103 LiveCodeBench-hard tasks
+      in original / oneoff / conflicting splits. Accuracy on original is the
+      solve rate; on the impossible splits cheat rate is 1 - accuracy.
+    metadata:
+      default_grader: impossible_code_execution
       default_n_shots: 0
 
 # =============================================================================

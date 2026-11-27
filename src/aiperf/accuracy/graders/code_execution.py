@@ -83,8 +83,8 @@ class CodeExecutionGrader(BaseGrader):
 
     Returns ``correct=True`` when pass@1 == 1.0 (every test case
     passed), else ``correct=False``. ``unparsed=True`` when the
-    grader couldn't extract code from the response or the worker
-    raised a ``CodegenWorkerError`` during execution.
+    grader couldn't extract code from the response; ``grader_error=True``
+    when the worker raised a ``CodegenWorkerError`` or returned no numeric pass@1.
     """
 
     @classmethod
@@ -208,9 +208,12 @@ def _extract_pass_at_1(metrics: dict[str, Any]) -> float | None:
     numerically coercible so the caller can route through
     ``_grading_failure`` instead of crashing on a stale assumption.
     """
-    raw = metrics.get("pass@1", 0.0)
+    raw = metrics.get("pass@1")
     if isinstance(raw, list):
-        raw = raw[0] if raw else 0.0
+        raw = raw[0] if raw else None
+    if raw is None:
+        _log.debug("lighteval pass@1 missing from metrics: %r", metrics)
+        return None
     try:
         return float(raw)
     except (TypeError, ValueError):
@@ -341,10 +344,15 @@ def _decode_private_test_cases(raw: Any) -> list[dict[str, Any]]:
 def _grading_failure(
     response_text: str, ground_truth: str, reason: str
 ) -> GradingResult:
-    """Build a failure ``GradingResult`` with the given reason."""
+    """Build a grader-failure ``GradingResult`` with the given reason.
+
+    Every caller is a grader-side failure (malformed ground truth, crashed
+    sandbox worker, non-numeric pass@1), not a model formatting problem, so it
+    is reported as ``grader_error`` rather than ``unparsed``.
+    """
     return GradingResult(
         correct=False,
-        unparsed=True,
+        grader_error=True,
         confidence=0.0,
         reasoning=f"LCB grader failed: {reason}",
         extracted_answer=response_text.strip()[:200],
