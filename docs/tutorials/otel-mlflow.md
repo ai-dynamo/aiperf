@@ -124,7 +124,8 @@ Open the MLflow UI at `http://localhost:5000`. Navigate to the experiment you sp
 During profiling you will see live scalars logged under the `live.*` namespace:
 
 - `live.gen_ai.client.operation.duration`
-- `live.gen_ai.client.token.usage`
+- `live.gen_ai.client.token.usage.input`
+- `live.gen_ai.client.token.usage.output`
 - `live.gen_ai.client.operation.time_per_output_chunk`
 - `live.gen_ai.client.operation.time_to_first_chunk`
 

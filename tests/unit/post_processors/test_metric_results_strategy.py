@@ -81,6 +81,30 @@ class TestMetricResultsStrategy:
         assert strategy.supports(timing_stats) is False
 
     @pytest.mark.asyncio
+    async def test_process_merges_input_and_output_tokens_into_token_usage(
+        self,
+    ) -> None:
+        context = _MetricStrategyContext(
+            attributes={},
+            coerced_values={
+                "input_sequence_length": [50.0],
+                "output_token_count": [200.0],
+            },
+        )
+        metric_record = create_metric_records_data(
+            results=[{"input_sequence_length": 50, "output_token_count": 200}]
+        )
+
+        await MetricResultsStrategy(context).process(metric_record)
+
+        assert context.get_histogram_calls == ["gen_ai.client.token.usage"] * 2
+        recorded = {
+            attrs["gen_ai.token.type"]: value
+            for value, attrs in context.histograms["gen_ai.client.token.usage"].records
+        }
+        assert recorded == {"input": 50.0, "output": 200.0}
+
+    @pytest.mark.asyncio
     async def test_process_records_numeric_metric_values_into_histograms(self) -> None:
         context = _MetricStrategyContext(
             attributes={"aiperf.worker.id": "worker-1"},
