@@ -330,6 +330,17 @@ spec:
                           routing. Values support environment variable substitution.
                         additionalProperties:
                           type: string
+                      urlHeaders:
+                        type: array
+                        description: 'Extra HTTP headers for individual targets: entry ``i`` applies to requests sent to ``urls[i]``
+                          and may be ``{}``. Merged over ``headers``; on a name clash (case-insensitive) the per-URL value
+                          wins. Use for routing hints such as ``X-data-parallel-rank``. Credential-bearing header names are
+                          rejected; put credentials in ``headers`` or ``api_key``. Example: [{X-data-parallel-rank: ''0''},
+                          {X-data-parallel-rank: ''1''}]'
+                        items:
+                          type: object
+                          additionalProperties:
+                            type: string
                       extra:
                         type: object
                         description: 'Additional fields to include in request body. Merged into every request. Common fields:

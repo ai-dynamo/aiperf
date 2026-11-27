@@ -59,6 +59,7 @@ def _endpoint_template_fallback(endpoint: dict[str, Any]) -> None:
 # Map (CLIConfig endpoint field name) -> (AIPerfConfig endpoint key).
 _ENDPOINT_FIELD_MAP: dict[str, str] = {
     "url_selection_strategy": "url_strategy",
+    "url_headers": "url_headers",
     "endpoint_type": "type",
     "streaming": "streaming",
     "allow_empty_content": "allow_empty_content",

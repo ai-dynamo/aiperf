@@ -99,6 +99,12 @@ class EndpointInfo(AIPerfBaseModel):
 
         return redact_header_tuples(value)
 
+    url_headers: list[dict[str, str]] = Field(
+        default=[],
+        description="Extra headers for individual URLs: entry i applies to "
+        "base_urls[i]. Merged over headers for requests sent to that URL.",
+    )
+
     api_key: str | None = Field(
         default=EndpointDefaults.API_KEY,
         description="API key to use for the endpoint.",
@@ -218,6 +224,25 @@ class EndpointInfo(AIPerfBaseModel):
             return self.base_urls[0]
         return self.base_urls[index % len(self.base_urls)]
 
+    def get_headers(self, index: int | None = None) -> dict[str, str]:
+        """Get the custom headers for the URL at ``index``.
+
+        Global ``headers`` apply to every URL; the URL's ``url_headers`` are laid
+        over them, replacing a global header of the same name regardless of
+        casing so the request never carries both. ``index`` wraps around like
+        :meth:`get_url`.
+        """
+        headers = dict(self.headers or ())
+        position = 0 if index is None else index % len(self.base_urls)
+        overrides = (
+            self.url_headers[position] if position < len(self.url_headers) else None
+        )
+        if overrides:
+            replaced = {name.lower() for name in overrides}
+            headers = {k: v for k, v in headers.items() if k.lower() not in replaced}
+            headers.update(overrides)
+        return headers
+
 
 class ModelEndpointInfo(AIPerfBaseModel):
     """Information about a model endpoint."""
@@ -264,6 +289,7 @@ class ModelEndpointInfo(AIPerfBaseModel):
                 allow_empty_content=ep.allow_empty_content,
                 base_urls=list(ep.urls),
                 headers=list((getattr(ep, "headers", {}) or {}).items()),
+                url_headers=list(getattr(ep, "url_headers", []) or []),
                 extra=list((getattr(ep, "extra", {}) or {}).items()),
                 timeout=ep.timeout,
                 api_key=ep.api_key,

@@ -446,8 +446,7 @@ class MessagesEndpoint(BaseEndpoint):
         """Get Anthropic-specific headers using x-api-key auth."""
         cfg = self.model_endpoint.endpoint
         headers: dict[str, str] = {"content-type": "application/json"}
-        if cfg.headers:
-            headers.update(cfg.headers)
+        headers.update(cfg.get_headers(request_info.url_index))
         if cfg.api_key and not cfg.auth_type:
             headers["x-api-key"] = cfg.api_key
         headers.setdefault("anthropic-version", _ANTHROPIC_VERSION)

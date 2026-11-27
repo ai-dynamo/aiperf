@@ -47,6 +47,7 @@ ENDPOINT_FIELDS: frozenset[str] = frozenset(
         "transport",
         "endpoint_type",
         "url_selection_strategy",
+        "url_headers",
         "per_chunk_usage",
         "urls",
         "use_legacy_max_tokens",

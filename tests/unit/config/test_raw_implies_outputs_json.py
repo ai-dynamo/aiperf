@@ -19,6 +19,7 @@ from aiperf.config.flags.converter import convert_cli_to_aiperf
 from aiperf.config.flags.resolver import resolve_config
 from aiperf.config.loader import load_config_from_mapping
 from aiperf.kubernetes.spec_converter import build_config_envelope
+from tests.unit.conftest import make_cli_with_fields_set
 
 
 def _artifacts(**kwargs: Any) -> ArtifactsConfig:
@@ -103,20 +104,17 @@ class TestRawImpliesOutputsJsonUnderConfigYaml:
         )
         return cfg
 
-    @staticmethod
-    def _cli(**kwargs: Any) -> CLIConfig:
-        """A CLIConfig whose model_fields_set is exactly ``kwargs``."""
-        return CLIConfig(**CLIConfig(**kwargs).model_dump(exclude_unset=True))
-
     def test_yaml_raw_true_implies_outputs_json(self, tmp_path: Path) -> None:
-        cfg = resolve_config(self._cli(), self._yaml(tmp_path, "    raw: true\n"))
+        cfg = resolve_config(
+            make_cli_with_fields_set(), self._yaml(tmp_path, "    raw: true\n")
+        )
         assert cfg.benchmark.artifacts.export_outputs_json is True
 
     def test_yaml_explicit_false_survives_cli_export_level_raw(
         self, tmp_path: Path
     ) -> None:
         cfg = resolve_config(
-            self._cli(export_level=ExportLevel.RAW),
+            make_cli_with_fields_set(export_level=ExportLevel.RAW),
             self._yaml(tmp_path, "    exportOutputsJson: false\n"),
         )
         artifacts = cfg.benchmark.artifacts
@@ -125,7 +123,7 @@ class TestRawImpliesOutputsJsonUnderConfigYaml:
 
     def test_yaml_raw_true_with_cli_opt_out(self, tmp_path: Path) -> None:
         cfg = resolve_config(
-            self._cli(export_outputs_json=False),
+            make_cli_with_fields_set(export_outputs_json=False),
             self._yaml(tmp_path, "    raw: true\n"),
         )
         artifacts = cfg.benchmark.artifacts
