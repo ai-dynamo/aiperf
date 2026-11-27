@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
+import orjson
 import pytest
 from pytest import param
 
@@ -14,6 +16,8 @@ from aiperf.common.models import RequestRecord
 from aiperf.common.models.dataset_models import Conversation, Image, Turn
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.credit.structs import Credit, CreditContext
+from aiperf.dataset.composer.custom import CustomDatasetComposer
+from aiperf.plugin.enums import CustomDatasetType
 from aiperf.timing.strategies.cache_bust import (
     RID_TARGETS,
     build_cache_bust_marker,
@@ -21,6 +25,7 @@ from aiperf.timing.strategies.cache_bust import (
 )
 from aiperf.workers.session_manager import UserSession
 from aiperf.workers.worker import Worker, _apply_cache_bust, _suffix_media_uuids
+from tests.unit.conftest import make_run_from_cli
 
 _SCREEN_A = "data:image/png;base64,QUFB"
 _SCREEN_B = "data:image/png;base64,QkJC"
@@ -229,6 +234,51 @@ def test_apply_cache_bust_media_uuids_fork_child_suffixes_own_media():
     )
     assert own.raw_messages is not None
     assert own.raw_messages[0]["content"][0]["uuid"] == f"3333-{rid_digest(marker)}"
+
+
+@pytest.mark.parametrize("media_uuids", [param(True, id="on"), param(False, id="off")])
+def test_dag_jsonl_synthesized_media_uuids_follow_cli_flag(
+    tmp_path: Path, media_uuids: bool
+) -> None:
+    """``--cache-bust-media-uuids`` reaches the DAG loader, so synthesized media gets suffixable uuids."""
+    dag = tmp_path / "mm.dag.jsonl"
+    image = {"media_hash": "screen", "kind": "image", "width": 32, "height": 32}
+    dag.write_bytes(
+        orjson.dumps({"session_id": "traj-0", "turns": [{"media_segments": [image]}]})
+    )
+    run = make_run_from_cli(
+        CLIConfig(
+            model_names=["test-model"],
+            endpoint_type="chat",
+            input_file=str(dag),
+            custom_dataset_type=CustomDatasetType.DAG_JSONL,
+            cache_bust="system_suffix",
+            cache_bust_media_uuids=media_uuids,
+        )
+    )
+    (conversation,) = CustomDatasetComposer(run=run, tokenizer=None).create_dataset()
+    turn = conversation.turns[0]
+    session = UserSession(
+        x_correlation_id="xcorr",
+        num_turns=1,
+        conversation=conversation,
+        turn_list=[turn],
+    )
+    marker = _marker()
+
+    _apply_cache_bust(
+        session,
+        _credit(marker, CacheBustTarget.SYSTEM_SUFFIX),
+        None,
+        media_uuids=run.cfg.is_cache_bust_media_uuids_enabled(),
+    )
+
+    part = turn.raw_messages[0]["content"][0]
+    if media_uuids:
+        assert part["uuid"].startswith("dag-image-")
+        assert part["uuid"].endswith(f"-{rid_digest(marker)}")
+    else:
+        assert "uuid" not in part
 
 
 @pytest.fixture(

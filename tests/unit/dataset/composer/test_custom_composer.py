@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock, mock_open, patch
 
 import pytest
@@ -511,6 +512,101 @@ class TestExplicitCustomDatasetType:
 
         composer.create_dataset()
         assert isinstance(composer.loader, DagJsonlLoader)
+        assert composer.loader._materializer.emit_media_uuid is False
+
+    @pytest.mark.parametrize("media_uuids", [True, False])
+    def test_dag_jsonl_forwards_cache_bust_media_uuids(
+        self, tmp_path: Path, mock_tokenizer: Mock, media_uuids: bool
+    ) -> None:
+        jsonl = tmp_path / "mm.dag.jsonl"
+        jsonl.write_text(
+            '{"session_id": "s", "turns": [{"media_segments": '
+            '[{"media_hash": "img", "kind": "image", "width": 8, "height": 8}]}]}\n'
+        )
+        cli_config = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type="chat",
+            input_file=str(jsonl),
+            cache_bust="system_suffix",
+            cache_bust_media_uuids=media_uuids,
+        )
+        composer = CustomDatasetComposer(
+            run=make_run(cli_config), tokenizer=mock_tokenizer
+        )
+        (conv,) = composer.create_dataset()
+        assert composer.loader._materializer.emit_media_uuid is media_uuids
+        part = conv.turns[0].raw_messages[0]["content"][0]
+        assert ("uuid" in part) is media_uuids
+
+    def test_dag_jsonl_forwards_tokenizer_for_structural_span_calibration(
+        self, tmp_path: Path, mock_tokenizer: Mock
+    ) -> None:
+        def _two_tokens_per_long_word(text: str, **_kwargs: Any) -> list[int]:
+            out: list[int] = []
+            for idx, word in enumerate(text.split()):
+                out.append(idx * 2)
+                if len(word) > 1:
+                    out.append(idx * 2 + 1)
+            return out
+
+        mock_tokenizer.encode = Mock(side_effect=_two_tokens_per_long_word)
+        jsonl = tmp_path / "calibrated.dag.jsonl"
+        jsonl.write_text(
+            '{"session_id": "root", "turns": ['
+            '{"prompt_spans": [{"kind": "text", "span_id": "s0", "tokens": 6, "role": "user"}], "max_tokens": 16},'
+            '{"in_text_tokens": 5, "max_tokens": 16}'
+            "]}\n"
+        )
+        cli_config = CLIConfig(
+            model_names=["test-model"],
+            input_file=str(jsonl),
+        )
+        composer = CustomDatasetComposer(
+            run=make_run(cli_config), tokenizer=mock_tokenizer
+        )
+        convs = composer.create_dataset()
+        assert len(convs) == 1
+        turn0_text = convs[0].turns[0].raw_messages[0]["content"][0]["text"]
+        turn1_text = convs[0].turns[1].raw_messages[0]["content"][0]["text"]
+        assert len(mock_tokenizer.encode(turn0_text)) == 6
+        assert len(mock_tokenizer.encode(turn1_text)) == 5
+
+    def test_multi_turn_with_extra_media_segments_still_autodetects_multi_turn(
+        self, tmp_path: Path, mock_tokenizer: Mock
+    ) -> None:
+        jsonl = tmp_path / "mt_with_extra.jsonl"
+        jsonl.write_text(
+            '{"session_id": "s", "turns": [{"text": "hi", "media_segments": []}]}\n'
+        )
+        cli_config = CLIConfig(
+            model_names=["test-model"],
+            input_file=str(jsonl),
+        )
+        composer = CustomDatasetComposer(
+            run=make_run(cli_config), tokenizer=mock_tokenizer
+        )
+        convs = composer.create_dataset()
+        assert isinstance(composer.loader, MultiTurnDatasetLoader)
+        assert len(convs) == 1
+
+    def test_multi_turn_uuid_only_images_with_in_text_tokens_autodetects_multi_turn(
+        self, tmp_path: Path, mock_tokenizer: Mock
+    ) -> None:
+        jsonl = tmp_path / "mt_image_uuids.jsonl"
+        jsonl.write_text(
+            '{"session_id": "s", "turns": [{"image_uuids": ["cached-image"], "in_text_tokens": 32}]}\n'
+        )
+        cli_config = CLIConfig(
+            model_names=["test-model"],
+            input_file=str(jsonl),
+        )
+        composer = CustomDatasetComposer(
+            run=make_run(cli_config), tokenizer=mock_tokenizer
+        )
+        convs = composer.create_dataset()
+        assert isinstance(composer.loader, MultiTurnDatasetLoader)
+        assert len(convs) == 1
+        assert convs[0].turns[0].images[0].uuids == ["cached-image"]
 
     def test_random_pool_routes_to_random_pool_loader(self, tmp_path, mock_tokenizer):
         """`--custom-dataset-type random-pool` must produce a RandomPoolDatasetLoader."""

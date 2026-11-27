@@ -34,6 +34,7 @@ from aiperf.dataset.loader._dag_jsonl_helpers import (
 )
 from aiperf.dataset.loader._delay_cap import DelayCapTracker
 from aiperf.dataset.loader.base_loader import BaseFileLoader, LoaderProbeData
+from aiperf.dataset.loader.dag_jsonl_media import DagMultimodalMaterializer
 from aiperf.dataset.loader.dag_jsonl_models import DagConversation, DagFork, DagTurn
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
@@ -41,6 +42,24 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 __all__ = ["DagJsonlLoader", "DagLoadError"]
+
+# ``MultiTurn`` turn keys; a file using any of them belongs to that loader.
+_MULTI_TURN_MODALITY_KEYS: frozenset[str] = frozenset(
+    {"text", "texts", "image", "images", "image_uuids", "audio", "audios", "video", "videos"}
+)  # fmt: skip
+
+
+def _is_dag_turn_probe(turn: dict[str, Any]) -> bool:
+    """Return True when ``turn`` carries a DAG-specific content or branching key."""
+    in_text_tokens = turn.get("in_text_tokens")
+    return (
+        isinstance(turn.get("messages"), list)
+        or bool(isinstance(turn.get("prompt_spans"), list) and turn["prompt_spans"])
+        or bool(isinstance(turn.get("media_segments"), list) and turn["media_segments"])
+        or (type(in_text_tokens) is int and in_text_tokens > 0)
+        or "forks" in turn
+        or "spawns" in turn
+    )
 
 
 def _resolve_delay_cap_seconds(run: BenchmarkRun | None) -> float | None:
@@ -66,7 +85,8 @@ class DagJsonlLoader(BaseFileLoader):
     """Plugin loader for DAG-shaped conversation JSONL files.
 
     One :class:`DagConversation` per line. Each turn is a :class:`DagTurn`
-    carrying a required ``messages`` array plus an explicit whitelist of
+    carrying a ``messages`` array (or ``prompt_spans`` / ``media_segments``
+    synthesized at load time) plus an explicit whitelist of
     OpenAI chat-completions fields; vendor-specific fields go in
     ``extra``. Unknown top-level keys are rejected at load time.
 
@@ -113,6 +133,8 @@ class DagJsonlLoader(BaseFileLoader):
         filename: str | Path | None = None,
         *,
         run: BenchmarkRun | None = None,
+        tokenizer: Any | None = None,
+        emit_media_uuid: bool = False,
         **kwargs: Any,
     ) -> None:
         if filename is None:
@@ -131,6 +153,11 @@ class DagJsonlLoader(BaseFileLoader):
             cap_seconds = None
         self._path = Path(filename)
         self._delay_cap_tracker = DelayCapTracker(cap_seconds=cap_seconds)
+        # Renders ``prompt_spans`` / ``media_segments`` / ``media_ref`` turns;
+        # authored ``messages`` without media pass through unchanged.
+        self._materializer = DagMultimodalMaterializer(
+            tokenizer=tokenizer, emit_media_uuid=emit_media_uuid
+        )
         self._conversations: dict[str, Conversation] = {}
         # Per-session, per-turn list of normalized DagFork objects. Bare-string
         # entries normalize to DagFork(child=s, background=False) at parse time.
@@ -154,7 +181,9 @@ class DagJsonlLoader(BaseFileLoader):
         """Return True when data looks like a DAG conversation line.
 
         DAG lines have top-level ``session_id`` and ``turns`` where at least
-        one turn carries a ``messages`` array, ``forks``, or ``spawns``.
+        one turn carries a ``messages`` array, non-empty ``prompt_spans`` /
+        ``media_segments``, positive ``in_text_tokens``, ``forks``, or
+        ``spawns``, and no turn carries ``MultiTurn`` modality keys.
         """
         if data is None:
             return False
@@ -168,14 +197,12 @@ class DagJsonlLoader(BaseFileLoader):
         turns = data.get("turns")
         if not isinstance(turns, list) or not turns:
             return False
+        has_dag_turn = False
         for t in turns:
-            if not isinstance(t, dict):
+            if not isinstance(t, dict) or not _MULTI_TURN_MODALITY_KEYS.isdisjoint(t):
                 return False
-            if isinstance(t.get("messages"), list):
-                return True
-            if "forks" in t or "spawns" in t:
-                return True
-        return False
+            has_dag_turn = has_dag_turn or _is_dag_turn_probe(t)
+        return has_dag_turn
 
     @classmethod
     def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
@@ -251,6 +278,7 @@ class DagJsonlLoader(BaseFileLoader):
                 if not raw:
                     continue
                 self._parse_one_line(lineno, raw)
+        self._materializer.warn_if_inline_payload_large()
         if not self._conversations:
             raise DagLoadError(
                 f"DAG JSONL file '{self._path}' is empty (no conversations "
@@ -355,8 +383,14 @@ class DagJsonlLoader(BaseFileLoader):
             inline_forks_per_turn.append([])
             inline_spawns_per_turn.append(group_spawn_entries(list(dag_conv.spawns)))
         else:
-            for t in dag_conv.turns:
-                turns.append(self._build_turn(t))
+            for turn_idx, t in enumerate(dag_conv.turns):
+                try:
+                    turns.append(self._build_turn(t, fallback_key=f"{sid}:{turn_idx}"))
+                except (ValueError, RuntimeError, OSError) as e:
+                    raise DagLoadError(
+                        f"{prefix} line {lineno}: session '{sid}' turn {turn_idx}: "
+                        f"content synthesis failed: {e}"
+                    ) from e
                 inline_forks_per_turn.append([normalize_fork_entry(e) for e in t.forks])
                 inline_spawns_per_turn.append(group_spawn_entries(t.spawns))
         self._conversations[sid] = Conversation(
@@ -393,9 +427,11 @@ class DagJsonlLoader(BaseFileLoader):
             seen.add(child)
         return list(children)
 
-    def _build_turn(self, t: DagTurn) -> Turn:
+    def _build_turn(self, t: DagTurn, *, fallback_key: str) -> Turn:
         return Turn(
-            raw_messages=list(t.messages),
+            raw_messages=self._materializer.materialize_turn_messages(
+                t, fallback_key=fallback_key
+            ),
             raw_tools=list(t.tools) if t.tools is not None else None,
             model=t.model,
             max_tokens=t.max_tokens,
