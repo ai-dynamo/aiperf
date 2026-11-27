@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -335,21 +336,27 @@ class DagJsonlLoader(BaseFileLoader):
                 f"DAG JSONL file '{self._path}' is empty (no conversations "
                 "parsed); supply at least one conversation line"
             )
-        try:
-            mat, summary = prepare_materializer_for_conversations(
-                parsed_convs,
-                materializer=self._materializer_arg,
-                media_scratch_dir=self._media_scratch_dir,
-                media_base_url=self._media_base_url,
-                video_wire_mode=self._video_wire_mode,
-                emit_media_uuid=self._emit_media_uuid,
-                tokenizer=self._tokenizer,
-            )
-        except (ValueError, RuntimeError, OSError) as e:
-            raise DagLoadError(f"{prefix}: multimodal staging failed: {e}") from e
-        self.media_staging_summary = summary
-        for dag_conv in parsed_convs:
-            self._populate_conversation(dag_conv, materializer=mat)
+        stage_ctx = (
+            self._materializer_arg.stage_lock
+            if self._materializer_arg is not None
+            else contextlib.nullcontext()
+        )
+        with stage_ctx:
+            try:
+                mat, summary = prepare_materializer_for_conversations(
+                    parsed_convs,
+                    materializer=self._materializer_arg,
+                    media_scratch_dir=self._media_scratch_dir,
+                    media_base_url=self._media_base_url,
+                    video_wire_mode=self._video_wire_mode,
+                    emit_media_uuid=self._emit_media_uuid,
+                    tokenizer=self._tokenizer,
+                )
+            except (ValueError, RuntimeError, OSError) as e:
+                raise DagLoadError(f"{prefix}: multimodal staging failed: {e}") from e
+            self.media_staging_summary = summary
+            for dag_conv in parsed_convs:
+                self._populate_conversation(dag_conv, materializer=mat)
 
     def _validate_raw_line(
         self, lineno: int, raw: bytes, seen_sids: set[str], prefix: str

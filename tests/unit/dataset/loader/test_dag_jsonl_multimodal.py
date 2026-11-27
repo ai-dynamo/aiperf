@@ -308,20 +308,27 @@ class TestDagMultimodalModels:
         assert asst_text.role == "assistant"
         assert user_media.role == "user"
 
+    @pytest.mark.parametrize(
+        ("bad_role", "extra_fields"),
+        [
+            param("system", {}, id="system"),
+            param("assistant", {}, id="assistant"),
+            param("tool", {"tool_call_id": "call_1"}, id="tool"),
+        ],
+    )  # fmt: skip
     def test_media_ref_rejected_in_non_user_authored_messages(
-        self, tmp_path: Path
+        self, bad_role: str, extra_fields: dict[str, Any]
     ) -> None:
         seg = DagMediaSegment(media_hash="img0", kind="image", width=64, height=64)
-        for bad_role in ("system", "assistant", "tool"):
-            msg: dict[str, Any] = {
-                "role": bad_role,
-                "content": [{"type": "media_ref", "media_hash": "img0"}],
-            }
-            if bad_role == "tool":
-                msg["tool_call_id"] = "call_1"
-            with pytest.raises(ValidationError, match="requires message role='user'"):
-                DagTurn(messages=[msg], media_segments=[seg])
+        msg: dict[str, Any] = {
+            "role": bad_role,
+            "content": [{"type": "media_ref", "media_hash": "img0"}],
+            **extra_fields,
+        }
+        with pytest.raises(ValidationError, match="requires message role='user'"):
+            DagTurn(messages=[msg], media_segments=[seg])
 
+    def test_loader_rejects_non_user_authored_media_ref(self, tmp_path: Path) -> None:
         bad_sys_path = _write_dag(
             tmp_path,
             [
@@ -354,6 +361,10 @@ class TestDagMultimodalModels:
         with pytest.raises(DagLoadError, match="requires message role='user'"):
             DagJsonlLoader(bad_sys_path).load()
 
+    def test_resolve_authored_messages_rejects_non_user_media_ref_before_render(
+        self,
+    ) -> None:
+        seg = DagMediaSegment(media_hash="img0", kind="image", width=64, height=64)
         mat = DagMultimodalMaterializer()
         with (
             patch.object(mat, "render_media_parts") as mock_render,
@@ -370,6 +381,9 @@ class TestDagMultimodalModels:
             )
         mock_render.assert_not_called()
 
+    def test_loader_accepts_mixed_role_authored_messages_with_user_media_ref(
+        self, tmp_path: Path
+    ) -> None:
         valid_path = _write_dag(
             tmp_path,
             [
@@ -1700,11 +1714,19 @@ class TestDagLoaderMultimodalDeduplicationAndReplay:
 
         mat._stage_lock = _TrackingRLock()  # type: ignore[assignment]
         first_variant = True
+        staging_tid: int | None = None
+
+        def _probe_nonblocking_acquire() -> tuple[int, bool]:
+            acquired = real_stage_lock.acquire(blocking=False)
+            if acquired:
+                real_stage_lock.release()
+            return threading.get_ident(), acquired
 
         def _paused_build_wire(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-            nonlocal first_variant
+            nonlocal first_variant, staging_tid
             if first_variant:
                 first_variant = False
+                staging_tid = threading.get_ident()
                 entered_wire_pass.set()
                 assert release_wire_pass.wait(timeout=5.0)
             return _build_wire_parts_from_uris(*args, **kwargs)
@@ -1715,6 +1737,11 @@ class TestDagLoaderMultimodalDeduplicationAndReplay:
         ):
             stage_task = asyncio.create_task(mat.async_stage_turns(turns))
             assert await asyncio.to_thread(entered_wire_pass.wait, 5.0) is True
+            probe_tid, lock_acquired = await asyncio.to_thread(
+                _probe_nonblocking_acquire
+            )
+            assert probe_tid != staging_tid
+            assert lock_acquired is False
             setter_task = asyncio.create_task(
                 asyncio.to_thread(mat.set_media_base_url, "http://127.0.0.1:9002/")
             )
@@ -1727,6 +1754,7 @@ class TestDagLoaderMultimodalDeduplicationAndReplay:
         assert mat.media_base_url == "http://127.0.0.1:9002"
         assert mat._staged_uris == {}
         assert mat._staged_wire_parts == {}
+        assert mat._media_cache == {}
 
     @pytest.mark.asyncio
     async def test_concurrent_load_async_and_cancellation_serialize_initialization(
@@ -1794,3 +1822,189 @@ class TestDagLoaderMultimodalDeduplicationAndReplay:
         assert len(by_sid["root"].turns[0].branch_ids) == 1
         assert len(by_sid["root"].turns[1].branch_ids) == 1
         assert len(by_sid["root"].turns[1].prerequisites) == 1
+
+    def test_image_frames_staged_bytes_counts_shared_frame_files_once(
+        self, tmp_path: Path
+    ) -> None:
+        seg_12fps = DagMediaSegment(
+            media_hash="shared_vid",
+            kind="video",
+            width=64,
+            height=64,
+            fps=12.0,
+            num_frames=3,
+        )
+        seg_24fps = DagMediaSegment(
+            media_hash="shared_vid",
+            kind="video",
+            width=64,
+            height=64,
+            fps=24.0,
+            num_frames=3,
+        )
+        turns = [
+            DagTurn(media_segments=[seg_12fps, seg_24fps], in_text_tokens=4),
+            DagTurn(media_segments=[seg_12fps], in_text_tokens=4),
+        ]
+        mat = DagMultimodalMaterializer(
+            video_wire_mode="image_frames",
+            media_scratch_dir=tmp_path,
+        )
+        summary = mat.stage_turns(turns)
+
+        png_files = sorted(tmp_path.glob("*.png"))
+        assert len(png_files) == 3
+        assert summary.unique_videos == 2
+        assert summary.total_segment_references == 3
+        assert summary.deduplicated_references == 1
+        assert summary.staged_bytes == sum(p.stat().st_size for p in png_files)
+
+    @pytest.mark.asyncio
+    async def test_load_async_holds_shared_materializer_lock_through_population(
+        self, tmp_path: Path
+    ) -> None:
+        scratch_dir = tmp_path / "media"
+        path = _write_dag(
+            tmp_path,
+            [
+                {
+                    "session_id": "root",
+                    "turns": [
+                        {
+                            "media_segments": [
+                                {
+                                    "media_hash": "shared_img",
+                                    "kind": "image",
+                                    "width": 32,
+                                    "height": 32,
+                                }
+                            ],
+                            "in_text_tokens": 4,
+                        }
+                    ],
+                }
+            ],
+            name="shared_populate_lock.dag.jsonl",
+        )
+        shared_mat = DagMultimodalMaterializer(
+            media_scratch_dir=scratch_dir,
+            media_base_url="http://127.0.0.1:9001",
+        )
+        real_stage_lock = shared_mat._stage_lock
+        seen_lock_threads: set[int] = set()
+        meta_lock = threading.Lock()
+        setter_attempted_lock = threading.Event()
+        entered_populate = threading.Event()
+        release_populate = threading.Event()
+        populate_tid: int | None = None
+
+        class _TrackingRLock:
+            def __enter__(self) -> Any:
+                with meta_lock:
+                    seen_lock_threads.add(threading.get_ident())
+                    if len(seen_lock_threads) >= 2:
+                        setter_attempted_lock.set()
+                return real_stage_lock.__enter__()
+
+            def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool | None:
+                return real_stage_lock.__exit__(exc_type, exc, tb)
+
+        shared_mat._stage_lock = _TrackingRLock()  # type: ignore[assignment]
+        loader1 = DagJsonlLoader(path, materializer=shared_mat)
+        orig_populate = loader1._populate_conversation
+
+        def _probe_nonblocking_acquire() -> tuple[int, bool]:
+            acquired = real_stage_lock.acquire(blocking=False)
+            if acquired:
+                real_stage_lock.release()
+            return threading.get_ident(), acquired
+
+        def _paused_populate(*args: Any, **kwargs: Any) -> None:
+            nonlocal populate_tid
+            populate_tid = threading.get_ident()
+            entered_populate.set()
+            assert release_populate.wait(timeout=5.0)
+            orig_populate(*args, **kwargs)
+
+        with patch.object(
+            loader1, "_populate_conversation", side_effect=_paused_populate
+        ):
+            load_task = asyncio.create_task(loader1.load_async())
+            assert await asyncio.to_thread(entered_populate.wait, 5.0) is True
+            probe_tid, lock_acquired = await asyncio.to_thread(
+                _probe_nonblocking_acquire
+            )
+            assert probe_tid != populate_tid
+            assert lock_acquired is False
+            setter_task = asyncio.create_task(
+                asyncio.to_thread(
+                    shared_mat.set_media_base_url, "http://127.0.0.1:9002/"
+                )
+            )
+            assert await asyncio.to_thread(setter_attempted_lock.wait, 5.0) is True
+            release_populate.set()
+            convs1 = await load_task
+            await setter_task
+
+        url1 = convs1[0].turns[0].raw_messages[0]["content"][1]["image_url"]["url"]
+        assert url1.startswith("http://127.0.0.1:9001/")
+        assert shared_mat.media_base_url == "http://127.0.0.1:9002"
+
+        convs2 = await DagJsonlLoader(path, materializer=shared_mat).load_async()
+        url2 = convs2[0].turns[0].raw_messages[0]["content"][1]["image_url"]["url"]
+        assert url2.startswith("http://127.0.0.1:9002/")
+
+    @pytest.mark.asyncio
+    async def test_render_media_parts_new_uuid_retries_atomically_on_base_url_update(
+        self, tmp_path: Path
+    ) -> None:
+        seg_u1 = DagMediaSegment(
+            media_hash="img_race",
+            kind="image",
+            width=32,
+            height=32,
+            uuid="u1",
+        )
+        seg_u2 = DagMediaSegment(
+            media_hash="img_race",
+            kind="image",
+            width=32,
+            height=32,
+            uuid="u2",
+        )
+        mat = DagMultimodalMaterializer(
+            media_scratch_dir=tmp_path,
+            media_base_url="http://127.0.0.1:9001",
+            emit_media_uuid=True,
+        )
+        mat.stage_turns([DagTurn(media_segments=[seg_u1], in_text_tokens=4)])
+
+        entered_build = threading.Event()
+        release_build = threading.Event()
+        calls = 0
+
+        def _paused_first_build(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                entered_build.set()
+                assert release_build.wait(timeout=5.0)
+            return _build_wire_parts_from_uris(*args, **kwargs)
+
+        with patch(
+            "aiperf.dataset.loader.dag_jsonl_media._build_wire_parts_from_uris",
+            side_effect=_paused_first_build,
+        ):
+            render_task = asyncio.create_task(
+                asyncio.to_thread(mat.render_media_parts, seg_u2)
+            )
+            assert await asyncio.to_thread(entered_build.wait, 5.0) is True
+            await asyncio.to_thread(mat.set_media_base_url, "http://127.0.0.1:9002/")
+            release_build.set()
+            parts = await render_task
+
+        assert calls == 2
+        assert len(parts) == 1
+        assert parts[0]["uuid"] == "u2"
+        assert parts[0]["image_url"]["url"].startswith("http://127.0.0.1:9002/")
+        assert list(mat._media_cache.keys()) == [mat._wire_cache_key(seg_u2)]

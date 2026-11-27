@@ -928,8 +928,22 @@ def _file_stat_token(
     return (str(path.resolve()), st.st_mtime_ns, st.st_size, sig)
 
 
-def _staged_paths_bytes(paths: list[Path]) -> int:
-    return sum(p.stat().st_size for p in paths if p.is_file())
+def _staged_paths_bytes(
+    paths: Iterable[Path],
+    *,
+    seen: set[Path] | None = None,
+) -> int:
+    seen_paths = seen if seen is not None else set()
+    total = 0
+    for p in paths:
+        if not p.is_file():
+            continue
+        resolved = p.resolve()
+        if resolved in seen_paths:
+            continue
+        seen_paths.add(resolved)
+        total += p.stat().st_size
+    return total
 
 
 class DagMultimodalMaterializer:
@@ -966,8 +980,14 @@ class DagMultimodalMaterializer:
         self._text_cache: OrderedDict[tuple[str, int], str] = OrderedDict()
         self._staged_text: dict[tuple[str, int], str] = {}
         self._stage_lock = threading.RLock()
+        self._config_epoch = 0
         self._frozen_for_timed_replay = False
         self.encode_calls_during_timed_replay = 0
+
+    @property
+    def stage_lock(self) -> threading.RLock:
+        """Reentrant lock serializing staging, cache invalidation, and population."""
+        return self._stage_lock
 
     @property
     def is_frozen_for_timed_replay(self) -> bool:
@@ -985,6 +1005,7 @@ class DagMultimodalMaterializer:
         """Update the HTTP base URL for staged media and invalidate cached wire dicts."""
         with self._stage_lock:
             self.media_base_url = base_url.rstrip("/") if base_url else None
+            self._config_epoch += 1
             self._media_cache.clear()
             self._staged_wire_parts.clear()
             self._staged_uris.clear()
@@ -1005,11 +1026,14 @@ class DagMultimodalMaterializer:
         """Synthesize deterministic text calibrated to ``num_tokens`` for ``span_id``."""
         target = max(1, int(num_tokens))
         cache_key = (span_id, target)
-        if cache_key in self._staged_text:
-            return self._staged_text[cache_key]
-        if cache_key in self._text_cache:
-            self._text_cache.move_to_end(cache_key)
-            return self._text_cache[cache_key]
+        with self._stage_lock:
+            staged = self._staged_text.get(cache_key)
+            if staged is not None:
+                return staged
+            cached = self._text_cache.get(cache_key)
+            if cached is not None:
+                self._text_cache.move_to_end(cache_key)
+                return cached
 
         rng = random.Random(_seed64("span_tok", span_id))
         words = [rng.choice(SINGLE_TOKEN_NEUTRAL_WORDS) for _ in range(target)]
@@ -1020,9 +1044,11 @@ class DagMultimodalMaterializer:
                 span_id, text, words, target=target, rng=rng
             )
 
-        self._text_cache[cache_key] = text
-        if len(self._text_cache) > self._max_cache * 4:
-            self._text_cache.popitem(last=False)
+        with self._stage_lock:
+            self._text_cache[cache_key] = text
+            self._text_cache.move_to_end(cache_key)
+            if len(self._text_cache) > self._max_cache * 4:
+                self._text_cache.popitem(last=False)
         return text
 
     def _resolve_encode_fn(self) -> Any | None:
@@ -1302,48 +1328,66 @@ class DagMultimodalMaterializer:
             self.media_base_url or "inline",
         )
 
+    def _config_state(
+        self,
+    ) -> tuple[
+        int,
+        str | None,
+        Literal["video_url", "image_frames"],
+        bool,
+        Path | None,
+    ]:
+        return (
+            self._config_epoch,
+            self.media_base_url,
+            self.video_wire_mode,
+            self.emit_media_uuid,
+            self.media_scratch_dir,
+        )
+
     def _put_media_cache(
         self, wire_key: tuple[Any, ...], parts: list[dict[str, Any]]
     ) -> None:
-        self._media_cache[wire_key] = parts
-        self._media_cache.move_to_end(wire_key)
-        if len(self._media_cache) > self._max_cache:
-            self._media_cache.popitem(last=False)
+        with self._stage_lock:
+            self._media_cache[wire_key] = parts
+            self._media_cache.move_to_end(wire_key)
+            if len(self._media_cache) > self._max_cache:
+                self._media_cache.popitem(last=False)
 
     def render_media_parts(self, segment: DagMediaSegment) -> list[dict[str, Any]]:
         """Render OpenAI ``image_url`` / ``video_url`` content parts for ``segment``."""
-        wire_key = self._wire_cache_key(segment)
-        staged_parts = self._staged_wire_parts.get(wire_key)
-        if staged_parts is not None:
-            return _clone_media_parts(staged_parts)
-        cached_parts = self._media_cache.get(wire_key)
-        if cached_parts is not None:
-            with contextlib.suppress(KeyError):
-                self._media_cache.move_to_end(wire_key)
-            return _clone_media_parts(cached_parts)
+        while True:
+            with self._stage_lock:
+                state = self._config_state()
+                wire_key = self._wire_cache_key(segment)
+                staged_parts = self._staged_wire_parts.get(wire_key)
+                if staged_parts is not None:
+                    return _clone_media_parts(staged_parts)
+                cached_parts = self._media_cache.get(wire_key)
+                if cached_parts is not None:
+                    self._media_cache.move_to_end(wire_key)
+                    return _clone_media_parts(cached_parts)
+                uri_key = self._uri_cache_key(segment)
+                staged_uris = self._staged_uris.get(uri_key)
+                if staged_uris is None:
+                    self._guard_not_frozen(segment.media_hash)
 
-        uri_key = self._uri_cache_key(segment)
-        staged_uris = self._staged_uris.get(uri_key)
-        if staged_uris is not None:
-            parts = _build_wire_parts_from_uris(
-                staged_uris,
-                segment,
-                video_wire_mode=self.video_wire_mode,
-                emit_media_uuid=self.emit_media_uuid,
+            uris = (
+                staged_uris
+                if staged_uris is not None
+                else self._compute_segment_uris(segment)
             )
-            self._put_media_cache(wire_key, parts)
-            return _clone_media_parts(parts)
-
-        self._guard_not_frozen(segment.media_hash)
-        uris = self._compute_segment_uris(segment)
-        parts = _build_wire_parts_from_uris(
-            uris,
-            segment,
-            video_wire_mode=self.video_wire_mode,
-            emit_media_uuid=self.emit_media_uuid,
-        )
-        self._put_media_cache(wire_key, parts)
-        return _clone_media_parts(parts)
+            parts = _build_wire_parts_from_uris(
+                uris,
+                segment,
+                video_wire_mode=state[2],
+                emit_media_uuid=state[3],
+            )
+            with self._stage_lock:
+                if self._config_state() != state:
+                    continue
+                self._put_media_cache(wire_key, parts)
+                return _clone_media_parts(parts)
 
     def _compute_segment_uris(self, segment: DagMediaSegment) -> tuple[str, ...]:
         if segment.kind == "image":
@@ -1368,11 +1412,13 @@ class DagMultimodalMaterializer:
     def _resolve_image_uri(
         self, segment: DagMediaSegment, *, seed_key: str, filename: str
     ) -> str:
-        if self.media_scratch_dir is not None:
-            out_path = self.media_scratch_dir / filename
+        scratch_dir = self.media_scratch_dir
+        base_url = self.media_base_url
+        if scratch_dir is not None:
+            out_path = scratch_dir / filename
             self._ensure_verified_png(out_path, segment.width, segment.height, seed_key)
-            if self.media_base_url is not None:
-                return f"{self.media_base_url}/{filename}"
+            if base_url is not None:
+                return f"{base_url}/{filename}"
             b64 = base64.b64encode(out_path.read_bytes()).decode("ascii")
             return f"data:image/png;base64,{b64}"
         raw = synth_deterministic_png_bytes(segment.width, segment.height, seed_key)
@@ -1383,12 +1429,12 @@ class DagMultimodalMaterializer:
 
     def _resolve_video_mp4_uri(self, segment: DagMediaSegment) -> str:
         fname = staged_media_filename(segment)
-        if self.media_scratch_dir is not None:
-            mp4_path = self._ensure_verified_mp4(
-                self.media_scratch_dir / fname, segment
-            )
-            if self.media_base_url is not None:
-                return f"{self.media_base_url}/{mp4_path.name}"
+        scratch_dir = self.media_scratch_dir
+        base_url = self.media_base_url
+        if scratch_dir is not None:
+            mp4_path = self._ensure_verified_mp4(scratch_dir / fname, segment)
+            if base_url is not None:
+                return f"{base_url}/{mp4_path.name}"
             b64 = base64.b64encode(mp4_path.read_bytes()).decode("ascii")
             return f"data:video/mp4;base64,{b64}"
         with tempfile.TemporaryDirectory(prefix="aiperf_dag_mp4_") as td:
@@ -1452,11 +1498,12 @@ class DagMultimodalMaterializer:
             )
             unique_images = 0
             unique_videos = 0
+            seen_staged_paths: set[Path] = set()
             staged_bytes = 0
             for seg in unique_segments.values():
                 if self.media_scratch_dir is not None:
                     paths = self._stage_media_segment(seg, allow_frozen=allow_frozen)
-                    staged_bytes += _staged_paths_bytes(paths)
+                    staged_bytes += _staged_paths_bytes(paths, seen=seen_staged_paths)
                 uri_key = self._uri_cache_key(seg)
                 if uri_key not in self._staged_uris:
                     if not allow_frozen:
@@ -1662,7 +1709,7 @@ def prepare_materializer_for_conversations(
     all_turns = [turn for _, turn in keyed_turns]
     fallback_keys = [key for key, _ in keyed_turns]
     if materializer is not None:
-        with materializer._stage_lock:
+        with materializer.stage_lock:
             summary = materializer._stage_turns(
                 all_turns, fallback_keys=fallback_keys, allow_frozen=True
             )
