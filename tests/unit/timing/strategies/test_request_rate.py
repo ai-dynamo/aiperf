@@ -3,6 +3,7 @@
 import asyncio
 import math
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
@@ -366,8 +367,53 @@ async def test_high_res_pacer_os_error_falls_back_to_event_loop_timers() -> None
     credit_issuer.try_issue_credit.assert_awaited_once()
 
 
+class _ControlledClock:
+    """A perf clock pinned at one instant, never the wall clock.
+
+    The rate loop's first deadline is ``started_at_perf_ns + next_interval()``
+    and it is compared against ``time.perf_counter()`` read a few statements
+    later. With a real clock, anything that deschedules the test between those
+    two reads -- building the first turn, creating the pacer, or simply a
+    starved CI runner -- silently spends the 0.05s interval. The deadline is
+    then already expired, the loop takes the no-pause branch, the credit issuer
+    reports the stop condition, and the phase returns without ever entering the
+    pacer. The test then blocks on ``pacer.started`` until its ``wait_for``
+    budget expires -- exactly the ``TimeoutError`` seen on Windows CI.
+
+    Sampling the stamp at read time only narrows that window; it does not close
+    it. Pinning the clock removes it: no amount of elapsed real time can move
+    the deadline, so the pacing precondition holds by construction.
+    """
+
+    def __init__(self, start: float = 1_000.0) -> None:
+        self.now = start
+
+    def perf_counter(self) -> float:
+        return self.now
+
+
+class _ControlledClockLifecycle:
+    """Phase lifecycle whose start stamp comes from the controlled clock."""
+
+    def __init__(self, clock: _ControlledClock) -> None:
+        self._clock = clock
+
+    @property
+    def started_at_perf_ns(self) -> int:
+        # Same function the production loop reads, so the two can never
+        # disagree about what "now" means.
+        return int(self._clock.perf_counter() * NANOS_PER_SECOND)
+
+
 @pytest.mark.asyncio
-async def test_execute_phase_cancelled_mid_pace_drains_pacer_and_closes() -> None:
+@pytest.mark.parametrize(
+    "setup_delay",
+    [0.0, 0.06],
+    ids=["no-setup-delay", "setup-exceeds-first-interval"],
+)
+async def test_execute_phase_cancelled_mid_pace_drains_pacer_and_closes(
+    setup_delay: float,
+) -> None:
     """A cancel during active pacing drains the pacer instead of orphaning it.
 
     ``_wait_for_pacer_or_rate_update`` cancels its two child tasks in a
@@ -384,8 +430,8 @@ async def test_execute_phase_cancelled_mid_pace_drains_pacer_and_closes() -> Non
 
         def next_interval(self) -> float:
             # Comfortably inside RATE_RAMP_UPDATE_INTERVAL (0.1s) so the
-            # high-res branch is taken, but long enough that setup overhead
-            # cannot push the first deadline into the past.
+            # high-res branch is taken. The controlled clock below keeps the
+            # first deadline from expiring no matter how long setup takes.
             return 0.05
 
     class FakePacer:
@@ -405,10 +451,20 @@ async def test_execute_phase_cancelled_mid_pace_drains_pacer_and_closes() -> Non
         def close(self) -> None:
             self.closed = True
 
-    lifecycle = MagicMock()
-    lifecycle.started_at_perf_ns = int(time.perf_counter() * NANOS_PER_SECOND)
+    clock = _ControlledClock()
+    lifecycle = _ControlledClockLifecycle(clock)
     conversation_source = MagicMock()
     conversation_source.next.return_value.build_first_turn.return_value = object()
+    if setup_delay:
+        # Real elapsed time between the start stamp and the first deadline
+        # check. With a wall clock this alone expired the 0.05s interval and
+        # the phase returned without pacing (the CI flake). The controlled
+        # clock makes it inert, which is the property under test here.
+        turn = conversation_source.next.return_value
+        conversation_source.next.side_effect = lambda: (
+            time.sleep(setup_delay),
+            turn,
+        )[1]
     credit_issuer = MagicMock()
     credit_issuer.try_issue_credit = AsyncMock(return_value=False)
     stop_checker = MagicMock()
@@ -433,7 +489,15 @@ async def test_execute_phase_cancelled_mid_pace_drains_pacer_and_closes() -> Non
         )
 
     pacer = FakePacer()
-    with patch.object(strategy, "_create_high_res_pacer", return_value=pacer):
+    # Pin the production module's clock so the first deadline cannot expire
+    # while the test is descheduled. Only `perf_counter` is used by that module.
+    with (
+        patch.object(strategy, "_create_high_res_pacer", return_value=pacer),
+        patch(
+            "aiperf.timing.strategies.request_rate.time",
+            SimpleNamespace(perf_counter=clock.perf_counter),
+        ),
+    ):
         task = asyncio.create_task(strategy.execute_phase())
         await asyncio.wait_for(pacer.started.wait(), timeout=5.0)
         # A repeat cancel models an external shutdown racing the first one.
