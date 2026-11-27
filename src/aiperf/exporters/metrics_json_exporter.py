@@ -101,9 +101,11 @@ class MetricsJsonExporter(MetricsBaseExporter):
         )
 
         run_metadata: dict[str, object] = {}
-        dataset = public_dataset_provenance(self._cfg) or remote_dataset_provenance(
-            self._cfg
-        )
+        dataset = public_dataset_provenance(
+            self._cfg,
+            source_sha256=getattr(self._results, "dataset_source_sha256", None),
+            source_hf_commit=getattr(self._results, "dataset_source_hf_commit", None),
+        ) or remote_dataset_provenance(self._cfg)
         if dataset is not None:
             run_metadata["dataset"] = dataset
         metric_duration_coverage = getattr(

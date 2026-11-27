@@ -944,6 +944,12 @@ to ~1800 seconds for a cold run. The cost is one-time: the reconstructed
 dataset lands in an on-disk cache (default `~/.cache/aiperf/dataset_mmap`)
 whose key includes the random seed, so pin `--random-seed` and later runs
 restore it in seconds.
+The per-run `profile_export_aiperf.json` records `metadata.dataset.source_sha256`,
+the SHA-256 of the validated Weka source rows. A cache hit retains the digest
+of the rows used to build its decoded dataset, even if the configured Hub
+repository or local fixture has since changed. For a reachable Hub repository,
+the loader also resolves and loads an immutable commit, recorded as
+`metadata.dataset.source_hf_commit`.
 
 **On Kubernetes**, each `AIPerfJob` starts with empty per-pod HuggingFace and
 dataset directories, so every job downloads and rebuilds the corpus even with

@@ -467,6 +467,14 @@ class ProfileMetricDurationCoverage(AIPerfBaseModel):
 class ProfileResults(AIPerfBaseModel):
     """The results of a profile run."""
 
+    dataset_source_sha256: str | None = Field(
+        default=None,
+        description="Source digest carried from the configured dataset, including mmap cache hits.",
+    )
+    dataset_source_hf_commit: str | None = Field(
+        default=None,
+        description="Hub commit carried from the configured dataset, including mmap cache hits.",
+    )
     records: list[MetricResult] | None = Field(
         default=None, description="The records of the profile results"
     )

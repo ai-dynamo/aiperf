@@ -854,6 +854,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # this event so results processors are configured (e.g. accuracy task names)
         # before any record is accumulated.
         self._dataset_configured_event: asyncio.Event = asyncio.Event()
+        self._dataset_source_sha256: str | None = None
+        self._dataset_source_hf_commit: str | None = None
         self._dataset_config_catch_up = DatasetConfigCatchUp(
             request_client=self.comms.create_request_client(
                 address=CommAddress.DATASET_MANAGER_PROXY_FRONTEND,
@@ -1501,6 +1503,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         result = ProcessRecordsResult(
             results=ProfileResults(
                 records=None,
+                dataset_source_sha256=self._dataset_source_sha256,
+                dataset_source_hf_commit=self._dataset_source_hf_commit,
                 completed=0,
                 start_ns=now,
                 end_ns=now,
@@ -1634,6 +1638,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     async def _on_dataset_configured(
         self, message: DatasetConfiguredNotification
     ) -> None:
+        self._dataset_source_sha256 = message.metadata.source_sha256
+        self._dataset_source_hf_commit = message.metadata.source_hf_commit
         for handler in (*self._accumulators.values(), *self._stream_exporters.values()):
             if hasattr(handler, "on_dataset_configured"):
                 handler.on_dataset_configured(message.metadata)
@@ -2817,6 +2823,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         result = ProcessRecordsResult(
             results=ProfileResults(
                 records=records_results,
+                dataset_source_sha256=self._dataset_source_sha256,
+                dataset_source_hf_commit=self._dataset_source_hf_commit,
                 warmup_records=warmup_records_results,
                 timeslices=timeslices or None,
                 completed=phase_stats.total_records,
