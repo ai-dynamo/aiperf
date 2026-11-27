@@ -12,6 +12,7 @@ import pytest
 from pydantic import ValidationError
 from pytest import param
 
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.config import BenchmarkConfig
 from aiperf.config.gpu_telemetry import GpuTelemetryConfig
 from aiperf.config.phases import ConcurrencyPhase
@@ -349,6 +350,81 @@ class TestArtifactDirResolver:
         ArtifactDirResolver().resolve(run)
 
         assert not stale.exists()
+
+    def test_resolve_archives_stale_raw_record_shards_inside_artifacts(
+        self, minimal_config, tmp_path
+    ):
+        target = tmp_path / "artifacts"
+        raw_records_dir = target / "raw_records"
+        raw_records_dir.mkdir(parents=True)
+        stale = raw_records_dir / "raw_records_old_service_id.jsonl"
+        stale_contents = '{"metadata": {"benchmark_phase": "profiling"}}\n'
+        stale.write_text(stale_contents, encoding="utf-8")
+
+        minimal_config.artifacts.export_outputs_json = False
+        minimal_config.artifacts.dir = target
+        run = _make_run(minimal_config, artifact_dir=target)
+
+        ArtifactDirResolver().resolve(run)
+
+        archives = list(
+            (target / ".aiperf-stale-raw-records").glob(
+                "*/raw_records_old_service_id.jsonl"
+            )
+        )
+        assert not stale.exists()
+        assert not list(raw_records_dir.glob("raw_records_*.jsonl"))
+        assert len(archives) == 1
+        assert archives[0].read_text(encoding="utf-8") == stale_contents
+        assert archives[0].is_relative_to(target)
+
+    @pytest.mark.skipif(IS_WINDOWS, reason="POSIX directory permissions are required")
+    def test_resolve_archives_stale_raw_record_shards_with_read_only_parent(
+        self, minimal_config, tmp_path
+    ):
+        read_only_parent = tmp_path / "read-only-parent"
+        target = read_only_parent / "artifacts"
+        raw_records_dir = target / "raw_records"
+        raw_records_dir.mkdir(parents=True)
+        stale = raw_records_dir / "raw_records_old_service_id.jsonl"
+        stale_contents = '{"metadata": {"benchmark_phase": "profiling"}}\n'
+        stale.write_text(stale_contents, encoding="utf-8")
+
+        minimal_config.artifacts.export_outputs_json = False
+        minimal_config.artifacts.dir = target
+        run = _make_run(minimal_config, artifact_dir=target)
+
+        read_only_parent.chmod(0o555)
+        try:
+            ArtifactDirResolver().resolve(run)
+        finally:
+            read_only_parent.chmod(0o755)
+
+        archives = list(
+            (target / ".aiperf-stale-raw-records").glob(
+                "*/raw_records_old_service_id.jsonl"
+            )
+        )
+        assert not stale.exists()
+        assert len(archives) == 1
+        assert archives[0].read_text(encoding="utf-8") == stale_contents
+
+    def test_probe_resolve_does_not_archive_stale_raw_record_shards(
+        self, minimal_config, tmp_path
+    ):
+        target = tmp_path / "artifacts"
+        raw_records_dir = target / "raw_records"
+        raw_records_dir.mkdir(parents=True)
+        stale = raw_records_dir / "raw_records_old_service_id.jsonl"
+        stale.write_text('{"metadata": {"benchmark_phase": "profiling"}}\n')
+
+        minimal_config.artifacts.dir = target
+        run = _make_run(minimal_config, artifact_dir=target)
+
+        ArtifactDirResolver().resolve(run, for_probe=True)
+
+        assert stale.exists()
+        assert not (target / ".aiperf-stale-raw-records").exists()
 
     def test_resolve_skips_fragment_purge_when_export_disabled(
         self, minimal_config, tmp_path
