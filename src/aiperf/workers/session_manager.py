@@ -50,6 +50,31 @@ def _count_expected_fork_children(conversation: Conversation) -> int:
     )
 
 
+def _private_turn(turn: Turn) -> Turn:
+    """Shallow copy of a dataset turn with its own mutable containers.
+
+    ``UserSession.conversation`` may be shared by every session on the same
+    conversation (the worker decodes each conversation once). The cache-bust
+    marker paths mutate ``raw_messages`` / ``raw_system`` / ``texts`` of the
+    turns in ``turn_list`` in place, so each session gets private lists while
+    the message dicts and content strings, which are never mutated, stay shared.
+    """
+    return turn.model_copy(
+        update={
+            "raw_messages": list(turn.raw_messages)
+            if turn.raw_messages is not None
+            else None,
+            "raw_system": list(turn.raw_system)
+            if turn.raw_system is not None
+            else None,
+            "texts": [
+                text.model_copy(update={"contents": list(text.contents)})
+                for text in turn.texts
+            ],
+        }
+    )
+
+
 class UserSession(AIPerfBaseModel):
     """
     User session for multi-turn processing.
@@ -197,7 +222,7 @@ class UserSession(AIPerfBaseModel):
                 f"Turn index {turn_index} is out of range for conversation with {self.num_turns} turns"
             )
 
-        turn = self.conversation.turns[turn_index]
+        turn = _private_turn(self.conversation.turns[turn_index])
         # A context reset must always break the server-side chain: chaining onto a
         # previous_response_id would retain history the reset is meant to discard.
         # Clearing is the safe direction (falls back to sending full history).
@@ -224,7 +249,9 @@ class UserSession(AIPerfBaseModel):
                 and len(self.turn_list) < turn_index
             ):
                 for missing_idx in range(len(self.turn_list), turn_index):
-                    self.turn_list.append(self.conversation.turns[missing_idx])
+                    self.turn_list.append(
+                        _private_turn(self.conversation.turns[missing_idx])
+                    )
             self.turn_list.append(turn)
         self.turn_index = turn_index
         return turn
