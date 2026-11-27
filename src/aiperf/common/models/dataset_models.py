@@ -664,6 +664,14 @@ class DatasetMetadata(AIPerfBaseModel):
         "Set by the loader based on dataset format semantics. "
         "Individual conversations can override this via their own context_mode field.",
     )
+    source_sha256: str | None = Field(
+        default=None,
+        description="SHA-256 of validated public Weka source rows, retained with decoded mmap data.",
+    )
+    source_hf_commit: str | None = Field(
+        default=None,
+        description="Hub commit pinned during public Weka loading, retained with decoded mmap data.",
+    )
 
     @field_validator("default_context_mode")
     @classmethod

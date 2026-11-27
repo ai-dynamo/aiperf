@@ -87,6 +87,8 @@ def mock_results(sample_records):
 class TestMetricsJsonExporter:
     @pytest.mark.asyncio
     async def test_json_export_includes_public_dataset_provenance(self, mock_results):
+        mock_results.dataset_source_sha256 = "a" * 64
+        mock_results.dataset_source_hf_commit = "b" * 40
         cfg = BenchmarkConfig.model_validate(
             {
                 "models": ["test-model"],
@@ -134,6 +136,8 @@ class TestMetricsJsonExporter:
             "hf_dataset_name": "semianalysisai/cc-traces-weka-062126",
             "hf_split": "train",
             "num_dataset_entries": 393,
+            "source_sha256": "a" * 64,
+            "source_hf_commit": "b" * 40,
         }
 
     @pytest.mark.asyncio

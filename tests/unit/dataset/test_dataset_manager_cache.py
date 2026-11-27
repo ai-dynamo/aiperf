@@ -145,6 +145,16 @@ class TestDatasetManagerCacheRoundtrip:
         assert mock_tokenizer.call_count >= 1
         first_call_count = mock_tokenizer.call_count
 
+        key = mmap_cache.compute_cache_key_from_run(run1)
+        assert key is not None
+        manifest_path = mmap_cache.cache_dir() / key / mmap_cache.MANIFEST_FILENAME
+        manifest = orjson.loads(manifest_path.read_bytes())
+        metadata = orjson.loads(manifest["dataset_metadata_json"])
+        metadata["source_sha256"] = "a" * 64
+        metadata["source_hf_commit"] = "b" * 40
+        manifest["dataset_metadata_json"] = orjson.dumps(metadata).decode()
+        manifest_path.write_bytes(orjson.dumps(manifest))
+
         # Run 2: identical config should HIT and skip the tokenizer entirely.
         run2 = _make_run(file_path=trace, benchmark_id="run-2")
         dm2 = await _run_configure(run2)
@@ -160,6 +170,8 @@ class TestDatasetManagerCacheRoundtrip:
         notifs = [m for m in published if isinstance(m, DatasetConfiguredNotification)]
         assert len(notifs) == 1
         assert dm2._cache_hit_used is True
+        assert notifs[0].metadata.source_sha256 == "a" * 64
+        assert notifs[0].metadata.source_hf_commit == "b" * 40
         await dm2.stop()
 
     @pytest.mark.asyncio

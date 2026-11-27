@@ -9,6 +9,7 @@ import pytest
 
 from aiperf.common.enums import PromptCorpus
 from aiperf.common.exceptions import DatasetLoaderError
+from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
 from aiperf.dataset.loader.semianalysis_cc_traces_weka import (
     SemiAnalysisCCTracesWekaLoader,
 )
@@ -142,6 +143,20 @@ class TestConstructorWiring:
         assert loader.hf_dataset_name == _NO_SUBAGENTS_HF_DATASET_NAME
         assert loader.hf_split == "train"
 
+    async def test_hub_commit_is_pinned_for_loading(
+        self, loader: SemiAnalysisCCTracesWekaLoader
+    ) -> None:
+        with (
+            patch("huggingface_hub.HfApi") as api,
+            patch.object(BaseHFDatasetLoader, "_load_hf_dataset") as load,
+        ):
+            api.return_value.dataset_info.return_value.sha = "a" * 40
+            loader._load_hf_dataset()
+
+        assert loader.hf_revision == "a" * 40
+        assert loader.source_hf_commit == "a" * 40
+        load.assert_called_once_with()
+
 
 # Row validation: load_dataset
 
@@ -165,6 +180,21 @@ class TestLoadDatasetRowValidation:
             assert len(traces) == 1
             assert isinstance(traces[0], WekaTrace)
             assert traces[0].id == trace_id
+
+    async def test_source_digest_tracks_validated_rows_before_selection(
+        self, loader: SemiAnalysisCCTracesWekaLoader
+    ) -> None:
+        rows = [_make_trace_dict("a"), _make_trace_dict("b")]
+        loader._validate_rows(rows)
+        original = loader.source_sha256
+        assert original is not None and len(original) == 64
+
+        loader._validate_rows(rows)
+        assert loader.source_sha256 == original
+
+        rows[1]["requests"][0]["in"] = 11
+        loader._validate_rows(rows)
+        assert loader.source_sha256 != original
 
     async def test_empty_dataset_returns_empty_dict(
         self, loader: SemiAnalysisCCTracesWekaLoader

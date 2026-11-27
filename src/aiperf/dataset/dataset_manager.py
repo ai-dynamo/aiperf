@@ -144,6 +144,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._backing_store: DatasetBackingStoreProtocol | None = None
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._default_context_mode: ConversationContextMode | None = None
+        self._source_sha256: str | None = None
+        self._source_hf_commit: str | None = None
         # The CustomDatasetComposer's resolved dataset type (set after compose),
         # used by the inputs.json skip decision for weka/raw/payload loaders.
         self._detected_dataset_type: CustomDatasetType | None = None
@@ -573,7 +575,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         composer = ComposerClass(run=self.run, tokenizer=self.tokenizer)
         self._default_context_mode = composer.get_default_context_mode()
-        return await composer.create_dataset_async()
+        conversations = await composer.create_dataset_async()
+        self._source_sha256 = getattr(composer, "source_sha256", None)
+        self._source_hf_commit = getattr(composer, "source_hf_commit", None)
+        return conversations
 
     def _load_custom_dataset(self) -> list[Conversation]:
         ComposerClass = plugins.get_class(
@@ -999,6 +1004,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     async def _configure_dataset(self) -> None:
         self.dataset_configured.clear()
         self._default_context_mode = None
+        self._source_sha256 = None
+        self._source_hf_commit = None
 
         accuracy_cfg = self.run.cfg.accuracy
         accuracy_enabled = accuracy_cfg.enabled if accuracy_cfg else False
@@ -1093,6 +1100,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             conversations=[conversation.metadata() for conversation in conversations],
             sampling_strategy=sampling_strategy,
             default_context_mode=self._default_context_mode,
+            source_sha256=self._source_sha256,
+            source_hf_commit=self._source_hf_commit,
         )
         self.info(
             f"sampling strategy: {self.dataset_metadata.sampling_strategy}, "

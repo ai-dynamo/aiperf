@@ -31,8 +31,11 @@ plugin metadata field; the loader itself is variant-agnostic.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
+import orjson
 from pydantic import ValidationError
 
 from aiperf.common.exceptions import DatasetLoaderError
@@ -67,6 +70,25 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
     """
 
     tag: ClassVar[str] = "SemiAnalysisCCTracesWeka"
+    source_sha256: str | None = None
+    source_hf_commit: str | None = None
+
+    def _load_hf_dataset(self) -> Any:
+        if not Path(self.hf_dataset_name).exists():
+            try:
+                from huggingface_hub import HfApi
+
+                info = HfApi().dataset_info(
+                    self.hf_dataset_name, revision=self.hf_revision
+                )
+                if info.sha:
+                    self.hf_revision = info.sha
+                    self.source_hf_commit = info.sha
+            except Exception as e:
+                self.debug(
+                    lambda error=e: f"Could not resolve Weka Hub commit: {error!r}"
+                )
+        return super()._load_hf_dataset()
 
     def __init__(
         self,
@@ -118,6 +140,7 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
         self.info(f"Preflighting all {total_rows} traces before selection")
         out: dict[str, list[WekaTrace]] = {}
         source_by_trace: dict[str, str] = {}
+        source_hash = hashlib.sha256()
         for i, row in enumerate(ds):
             try:
                 trace = WekaTrace.model_validate(row)
@@ -131,11 +154,16 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
                     f"Duplicate trace id '{trace.id}' at row {i} of "
                     f"{self.hf_dataset_name}"
                 )
+            source_hash.update(
+                orjson.dumps(trace.model_dump(mode="json"), option=orjson.OPT_SORT_KEYS)
+            )
+            source_hash.update(b"\n")
             out[trace.id] = [trace]
             source_by_trace[trace.id] = f"row {i} of {self.hf_dataset_name}"
         normalized, _ = self._weka.preflight_nested_timestamps(
             out, source_by_trace=source_by_trace
         )
+        self.source_sha256 = source_hash.hexdigest()
         return normalized
 
     def _validate_rows(self, ds: Any) -> dict[str, list[WekaTrace]]:

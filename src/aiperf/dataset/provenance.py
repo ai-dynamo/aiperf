@@ -13,7 +13,12 @@ if TYPE_CHECKING:
     from aiperf.config.config import BenchmarkConfig
 
 
-def public_dataset_provenance(cfg: BenchmarkConfig) -> dict[str, object] | None:
+def public_dataset_provenance(
+    cfg: BenchmarkConfig,
+    *,
+    source_sha256: str | None = None,
+    source_hf_commit: str | None = None,
+) -> dict[str, object] | None:
     """Return stable source metadata for the configured public dataset.
 
     Returns None unless the run's resolved dataset is a public dataset.
@@ -46,6 +51,10 @@ def public_dataset_provenance(cfg: BenchmarkConfig) -> dict[str, object] | None:
         provenance["hf_subset"] = hf_subset
     if dataset.entries_explicit:
         provenance["num_dataset_entries"] = dataset.entries
+    if source_sha256 is not None:
+        provenance["source_sha256"] = source_sha256
+    if source_hf_commit is not None:
+        provenance["source_hf_commit"] = source_hf_commit
     return provenance
 
 

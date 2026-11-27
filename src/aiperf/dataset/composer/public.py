@@ -29,6 +29,8 @@ class PublicDatasetComposer(BaseDatasetComposer):
         if not isinstance(dataset, PublicDataset):
             raise ValueError("PublicDatasetComposer requires a public dataset.")
         self._public_dataset = dataset
+        self.source_sha256: str | None = None
+        self.source_hf_commit: str | None = None
 
     def create_dataset(self) -> list[Conversation]:
         raise NotImplementedError("Use create_dataset_async() for public datasets")
@@ -51,6 +53,8 @@ class PublicDatasetComposer(BaseDatasetComposer):
         )
 
         data = await loader.load_dataset()
+        self.source_sha256 = getattr(loader, "source_sha256", None)
+        self.source_hf_commit = getattr(loader, "source_hf_commit", None)
         conversations = await loader.convert_to_conversations(data)
 
         for conversation in conversations:
