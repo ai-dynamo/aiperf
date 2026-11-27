@@ -279,8 +279,9 @@ class TestRemoteDatasetPreflightWiring:
     def test_access_runs_before_anything_reads_the_promoted_phase(self) -> None:
         """The CLI builds a remote trace's phase optimistically as fixed_schedule.
 
-        The access preflight settles it, so it must run before the endpoint
-        probe, the download, and the run itself (whose resolver chain checks the
+        The access preflight settles it, so it must run before the goodput
+        check (whose metric set depends on the phase type), the endpoint probe,
+        the download, and the run itself (whose resolver chain checks the
         dataset's timing data against the phase type).
         """
         import aiperf.cli_runner as cli_runner
@@ -297,6 +298,7 @@ class TestRemoteDatasetPreflightWiring:
             "_preflight_accuracy_deps",
             "_preflight_fd_limit",
             "_preflight_dataset_access",
+            "_preflight_goodput",
             "_preflight_endpoint_ready",
             "_preflight_dataset_materialize",
             "_run_multi_benchmark",
@@ -314,6 +316,9 @@ class TestRemoteDatasetPreflightWiring:
                     )
                 )
             cli_runner.run_benchmark(plan)
+        assert calls.index("_preflight_dataset_access") < calls.index(
+            "_preflight_goodput"
+        )
         assert calls.index("_preflight_dataset_access") < calls.index(
             "_preflight_endpoint_ready"
         )
