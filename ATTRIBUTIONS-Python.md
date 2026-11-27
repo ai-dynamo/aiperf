@@ -861,7 +861,7 @@ THE SOFTWARE.
 ```
 
 ### URLs
-  - `Changelog`: https://github.com/fastapi/annotated-doc/release-notes.md
+  - `Changelog`: https://github.com/fastapi/annotated-doc/blob/main/release-notes.md
   - `Documentation`: https://github.com/fastapi/annotated-doc
   - `Homepage`: https://github.com/fastapi/annotated-doc
   - `Issues`: https://github.com/fastapi/annotated-doc/issues
