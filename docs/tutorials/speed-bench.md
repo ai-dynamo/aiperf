@@ -100,7 +100,7 @@ from the 14 original sources on first use.
 One source, [`cais/hle`](https://huggingface.co/datasets/cais/hle), is gated
 and appears in **every** SPEED-Bench config, so access is required:
 
-1. Open <https://huggingface.co/datasets/cais/hle> and accept the terms.
+1. Open [the `cais/hle` dataset](https://huggingface.co/datasets/cais/hle) and accept the terms.
    Approval is automatic — no reviewer, no waiting period.
 2. Run `hf auth login`.
 

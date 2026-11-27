@@ -415,7 +415,7 @@ class Usage(BaseModel):
 
 ### Bailian / DashScope (Alibaba Qwen)
 
-**Verified against:** [`dashscope/dashscope-sdk-python` / `dashscope/api_entities/dashscope_response.py`](https://github.com/dashscope/dashscope-sdk-python/blob/main/dashscope/api_entities/dashscope_response.py).
+**Verified against:** [`dashscope/dashscope-sdk-python` / `dashscope/legacy_1x/api_entities/dashscope_response.py`](https://github.com/dashscope/dashscope-sdk-python/blob/main/dashscope/legacy_1x/api_entities/dashscope_response.py).
 
 ```python
 @dataclass
