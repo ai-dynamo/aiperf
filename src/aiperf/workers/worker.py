@@ -149,12 +149,10 @@ def _credit_task_key(credit: Credit) -> tuple[str, int | None, int]:
     return (credit.phase, credit.phase_index, credit.id)
 
 
-def _clear_transport_eof_on_error(
-    record: RequestRecord, context: CreditContext
-) -> None:
+def _clear_replay_eof_on_error(record: RequestRecord, context: CreditContext) -> None:
+    """Failed requests cannot satisfy replay gates, even when transport EOF is known."""
     if record.error is None:
         return
-    record.response_body_eof_perf_ns = None
     context.transport_eof_wall_ns = None
     context.transport_eof_perf_ns = None
     context.transport_eof_correction_ns = None
@@ -2046,7 +2044,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             ),
             transport_eof_callback=self._make_transport_eof_callback(credit_context),
         )
-        _clear_transport_eof_on_error(record, credit_context)
+        _clear_replay_eof_on_error(record, credit_context)
         self._populate_response_metrics(credit_context, record)
         self._detect_ended_on_truncation(credit_context, record)
         await self._send_inference_result_message(record)
@@ -2388,7 +2386,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             ),
             transport_eof_callback=self._make_transport_eof_callback(credit_context),
         )
-        _clear_transport_eof_on_error(record, credit_context)
+        _clear_replay_eof_on_error(record, credit_context)
         await self._send_inference_result_message(record)
         credit_context.record_emitted = True
         if record.error is not None:

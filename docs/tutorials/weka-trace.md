@@ -87,7 +87,8 @@ The `--fixed-schedule` flag replays requests at their recorded timestamps; subag
 ### Finite agentic replay
 
 Use finite replay to admit each root trace once and keep its lane occupied until
-its background descendants finish:
+its background descendants finish. This selects `agentic_replay` timing without
+an AgentX scenario or `--fixed-schedule`:
 
 ```bash
 aiperf profile \
@@ -105,23 +106,175 @@ aiperf profile \
 `shuffle` admits them in the sampler's shuffled order. `random` uses a seeded
 random order without replacement so every eligible root still runs once.
 
+#### Choosing a replay mode
+
+| Mode | When to use it | When it stops |
+|---|---|---|
+| Fixed schedule (`--fixed-schedule`) | Replay the trace's recorded request schedule. | When the scheduled workload finishes, or a configured stop condition is reached. |
+| Steady-state agentic replay (AgentX scenarios) | Maintain a continuing load of session trees, with trajectory warmup and root recycling. | At the configured benchmark limit. |
+| Finite agentic replay (`--agentic-replay-lifecycle finite`) | Replay each eligible root from turn 0 once, preserving timestamp floors and transport dependencies. | After the root pool and all admitted trees finish. |
+
+Finite mode runs the dataset that remains after your loading and filtering
+settings. It does not restore requests removed by those settings. Use a pinned
+corpus, the same filters, and the same random seed when comparing runs.
+
+#### Root admission and completion
+
+`--concurrency` limits the number of live **session trees**, not the total
+number of HTTP requests. A tree includes its root and every descendant it
+spawns, so parent and child requests can overlap within one lane.
+
+For three eligible roots, A, B, and C, with `--concurrency 2` and sequential
+sampling:
+
+1. A and B start at turn 0, each in its own lane.
+2. A sends its last request, but its background child is still running. A keeps
+   its lane; C does not start in that lane yet.
+3. Once A and all its descendants finish, C starts in the freed lane.
+4. B and C finish without recycling A or B. As the root pool empties, fewer than
+   two trees can remain live.
+5. The phase completes after every admitted tree and its pending replay work
+   have drained.
+
+If concurrency exceeds the eligible root count, only the available roots start.
+An empty eligible root pool is an error.
+
+#### Request timing
+
 Finite mode uses the first HTTP request in each root as its timeline origin.
 Subsequent requests wait for their root-relative timestamp floor and any
-recorded predecessor transport events. The Weka loader currently infers
+recorded predecessor transport events. The earliest dispatch time is the latest
+of:
+
+- The root's actual first HTTP start plus the request's recorded offset.
+- Each predecessor's actual HTTP start or successful response-body EOF, plus
+  that dependency's recorded delay.
+
+A dependency on **HTTP start** can let a child overlap its parent's response.
+A dependency on **completion** waits for successful body EOF; receiving an SSE
+`[DONE]` event alone does not release it.
+
+For example, suppose a parent turn has a recorded floor of 500 ms and must wait
+for a child to complete. All times below are relative to the root's first HTTP
+start, and the completion dependency has no extra delay:
+
+| Event | Time |
+|---|---|
+| Root's first HTTP start | 0 ms |
+| Child reaches its recorded spawn offset and starts | 200 ms |
+| Parent turn reaches its recorded timestamp floor | 500 ms |
+| Child response body reaches EOF successfully | 750 ms |
+| Parent turn can start | 750 ms or later |
+
+If the child instead reaches EOF at 400 ms, the parent still waits until 500 ms.
+The floor prevents early dispatch; a slow dependency can move dispatch later.
+These are earliest dispatch times, not a guarantee that scheduling or HTTP
+processing adds no overhead.
+
+The Weka loader currently infers
 zero-delay cross-stream completion edges and SPAWN timing from trace timestamps;
-it does not accept the typed dependency format in issue #1458. Finite mode
-requires HTTP and excludes warmup, request/duration caps, cancellation, dataset
-wrapping, and trace-delay compression.
+it does not accept the typed dependency format in issue #1458. Use the producer's
+known [nested timestamp basis](#what-is-a-weka-trace); relative producer timestamps
+are supported and canonicalized before replay.
+
 Local workers use the same performance clock as the controller for dependency
 timing. Kubernetes workers calibrate their clock offset before dispatch.
+See [finite replay on Kubernetes](../kubernetes/workflow.md#finite-agentic-replay)
+for deployment and troubleshooting.
 
-For successful finite requests, `profile_export.jsonl` records the client-side
-response-body EOF separately as `metadata.response_body_eof_ns`. With
+#### YAML configuration
+
+The same run can be expressed in a [YAML configuration file](yaml-config.md):
+
+```yaml
+# finite-replay.yaml
+schemaVersion: "2.0"
+random_seed: 42
+
+benchmark:
+  model: claude-opus-4-5-20251101
+  endpoint:
+    url: http://localhost:8000
+    type: chat
+    streaming: true
+  dataset:
+    type: file
+    path: artifacts/kv-cache-tester/traces/
+    format: weka_trace
+    sampling: sequential
+  phases:
+    - name: profiling
+      type: concurrency
+      concurrency: 2
+      agenticReplayLifecycle: finite
+  artifacts:
+    raw: true
+```
+
+```bash
+aiperf profile --config finite-replay.yaml
+```
+
+Use your served model name, and set `benchmark.tokenizer.name` if that name does not
+resolve a tokenizer. There is no `requests`, `duration`, or `sessions` stop
+condition: the finite root pool defines completion. If the config contains
+multiple profiling phases, each must use the finite lifecycle.
+
+#### Supported settings
+
+Finite replay rejects settings that truncate the workload or change its timing:
+
+| Setting | Finite replay behavior |
+|---|---|
+| Phase type | Requires a profiling concurrency phase. Request-rate and fixed-schedule phases are rejected. |
+| Stop conditions | Omit request counts, benchmark duration, and session limits, including YAML `sessions: all`. |
+| Warmup | Explicit warmup phases, cache-warmup duration, and agentic warmup grace settings are rejected. Finite mode does not synthesize trajectory warmup. |
+| Ramps and phase transitions | Concurrency/prefill ramps, burst phase starts, and seamless phases are rejected. |
+| Cancellation | Request-cancellation testing with a nonzero rate is rejected. |
+| Dataset wrapping | `allow_dataset_wrap` must remain disabled. Each eligible root is admitted once. |
+| Delay changes | Omit trace, inter-turn, and global idle-gap caps, replay speedup, `--ignore-trace-delays`, and `--use-think-time-only`. |
+| Endpoint and transport | Requires HTTP without a polling workflow. Custom HTTP plugins must implement the [transport boundary callbacks](../plugins/plugin-system.md#endpoint-and-transport-categories). |
+
+The `agentx` and `inferencex-agentx-mvp` presets configure steady-state replay.
+Their warmup, duration, and idle-gap settings conflict with finite replay. Use
+the plain Weka command or YAML above rather than adding the finite flag to a
+scenario command. A finite replay run does not follow the AgentX submission
+recipe.
+
+#### Failures and troubleshooting
+
+Configuration and graph validation reject unsupported controls, invalid
+timestamps, missing or cross-root dependencies, and dependency cycles before
+replay traffic starts. Fix the named setting or trace entry rather than
+removing its dependency to make the run proceed.
+
+During replay, a failed request in any admitted tree, including a background
+child, fails the finite run. Missing HTTP-start/EOF events or invalid transport
+timestamps also fail the run. Dependent turns are not released as if the request
+had succeeded, and the failed lane is not recycled into a new root.
+
+Long recorded gaps can leave the run idle while future requests are scheduled.
+Finite mode preserves those gaps. Check the trace timestamps and pending work
+before treating a quiet interval as a stall. On Kubernetes, also check
+[worker clock calibration](../kubernetes/debug-command.md#finite-replay-workers-do-not-become-ready).
+
+Keep the logs and per-request records when investigating a failed run. Final
+exports can be unavailable if every request fails; see
+[records from failed runs](working-with-profile-exports.md#records-from-failed-runs).
+
+#### Response-body EOF in exports
+
+HTTP requests record the client-side response-body EOF separately as
+`metadata.response_body_eof_ns` in `profile_export.jsonl`, including fully read
+error responses and ordinary profiling. Finite replay still requires success
+before accepting EOF as a completion dependency. With
 `--export-level raw`, `profile_export_raw.jsonl` also contains
 `response_body_eof_perf_ns`, in the same worker monotonic clock domain as
 `start_perf_ns`. The existing `request_end_ns` and last raw SSE event retain
 their existing meanings. Client HTTP start is a request invocation boundary;
 EOF is receipt of the response body, not the engine's final token.
+See [response-body timing examples](working-with-profile-exports.md#response-body-timing)
+for successful requests, HTTP errors, and missing EOF.
 
 ### Directory vs Single File
 
@@ -204,7 +357,7 @@ A tokenizer is required in both paths (the prompt is reconstructed from `hash_id
 
 ## Replay Timing Controls
 
-By default, AIPerf auto-enables `--fixed-schedule` for trace datasets — turns are sent at their recorded timestamps, subagents run in parallel, and the parent waits on `SPAWN_JOIN`. The Quick Start above is what you want for most cases.
+By default, AIPerf auto-enables `--fixed-schedule` for trace datasets — turns are sent at their recorded timestamps, subagents run in parallel, and the parent waits on `SPAWN_JOIN`. The Quick Start above is what you want for most cases. Selecting [finite agentic replay](#finite-agentic-replay) instead uses its concurrency phase and transport dependencies; do not add `--fixed-schedule` to that command.
 
 If you need different replay pacing, several flags are available (recent additions, all weka-trace-aware):
 
@@ -225,7 +378,11 @@ still wins (both flags can be set; there is no startup mutex error).
 
 For multi-turn steady-state benchmarking with sampler-driven recycle (honors
 `sampling_strategy`) and trajectory-based warmup (the agent-load-generation
-pattern AgentX MVP requires), AIPerf has a dedicated timing mode: `agentic_replay`. It is **scenario-locked** — there is no direct CLI flag to select it. Pass `--scenario inferencex-agentx-mvp` (the only built-in scenario that pins this mode today) and AIPerf's scenario validator sets `timing_mode=agentic_replay` for you:
+pattern AgentX MVP requires), AIPerf has a dedicated timing mode: `agentic_replay`.
+The `agentx` and `inferencex-agentx-mvp` scenarios select it for steady-state
+replay. [Finite replay](#finite-agentic-replay) selects it directly with
+`--agentic-replay-lifecycle finite`, without a scenario. For a steady-state
+AgentX run:
 
 ```bash
 aiperf profile \

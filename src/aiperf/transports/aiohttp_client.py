@@ -61,16 +61,25 @@ def _expected_request_body_size(data: Any) -> int | None:
 def _record_response_body_eof(
     response: aiohttp.ClientResponse,
     record: RequestRecord,
-    callback: "TransportBoundaryCallback",
+    callback: "TransportBoundaryCallback | None" = None,
 ) -> None:
-    """Validate body EOF and stamp the record before notifying the observer."""
+    """Keep the first observed body EOF; optionally notify finite replay.
+
+    Ordinary profiling records EOF without a callback. Finite replay requires
+    a complete body before passing its timestamp to completion dependencies;
+    an unfinished body raises ResponseBodyIncompleteError when a callback is set.
+    Without a callback, an unfinished body is left unread and unstamped.
+    """
     if not response.content.at_eof():
-        raise ResponseBodyIncompleteError(
-            "Successful HTTP response did not reach body EOF"
-        )
-    eof_perf_ns = time.perf_counter_ns()
-    record.response_body_eof_perf_ns = eof_perf_ns
-    callback(eof_perf_ns)
+        if callback is not None:
+            raise ResponseBodyIncompleteError(
+                "Successful HTTP response did not reach body EOF"
+            )
+        return
+    if record.response_body_eof_perf_ns is None:
+        record.response_body_eof_perf_ns = time.perf_counter_ns()
+    if callback is not None:
+        callback(record.response_body_eof_perf_ns)
 
 
 VIDEO_DOWNLOAD_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
@@ -126,6 +135,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         transport_start_callback: "TransportBoundaryCallback | None" = None,
         transport_eof_callback: "TransportBoundaryCallback | None" = None,
         trace_data: AioHttpTraceData | None = None,
+        record: RequestRecord | None = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,
         capture_redirects: bool = False,
@@ -142,6 +152,7 @@ class AioHttpClient(AIPerfLoggerMixin):
             on_request_sent: Optional event to set when the full request is sent
             first_token_callback: Optional callback fired on first SSE message with ttft_ns
             trace_data: Optional trace data to populate (for cancellation scenarios)
+            record: Shared record so cancellation during cleanup retains observed EOF.
             connector: Optional TCP connector to use instead of the shared pool.
                 If None, uses self.tcp_connector (shared pool).
             connector_owner: If True, the session will close the connector when done.
@@ -162,12 +173,12 @@ class AioHttpClient(AIPerfLoggerMixin):
 
         # Use provided trace_data or create new one
         if trace_data is None:
-            trace_data = AioHttpTraceData()
+            trace_data = record.trace_data if record is not None else AioHttpTraceData()
 
-        record: RequestRecord = RequestRecord(
-            start_perf_ns=time.perf_counter_ns(),
-            trace_data=trace_data,
-        )
+        if record is None:
+            record = RequestRecord(
+                start_perf_ns=time.perf_counter_ns(), trace_data=trace_data
+            )
 
         # Create trace config for comprehensive timing.
         # The trace fires `on_request_sent` once `bytes_sent` reaches this size, so
@@ -228,6 +239,8 @@ class AioHttpClient(AIPerfLoggerMixin):
                     # Treat the full 2xx range as success so async job APIs can
                     # return accepted/created responses without being rejected.
                     if response.status < 200 or response.status >= 300:
+                        await response.read()
+                        _record_response_body_eof(response, record)
                         error_text = await response.text()
                         record.end_perf_ns = time.perf_counter_ns()
                         record.error = ErrorDetails(
@@ -292,22 +305,28 @@ class AioHttpClient(AIPerfLoggerMixin):
 
                         # Separate code paths for performance: avoid callback checks
                         # when no callback is registered
-                        if first_token_callback:
-                            first_token_acquired = False
-                            async for message in sse_messages:
-                                reader_cls.inspect_message_for_error(message)
-                                record.responses.append(message)
-                                # Fire callback until it returns True (meaningful content found)
-                                if not first_token_acquired:
-                                    ttft_ns = message.perf_ns - record.start_perf_ns
-                                    first_token_acquired = await first_token_callback(
-                                        ttft_ns, message
-                                    )
-                        else:
-                            # Fast path: no callback, just collect responses
-                            async for message in sse_messages:
-                                reader_cls.inspect_message_for_error(message)
-                                record.responses.append(message)
+                        try:
+                            if first_token_callback:
+                                first_token_acquired = False
+                                async for message in sse_messages:
+                                    reader_cls.inspect_message_for_error(message)
+                                    record.responses.append(message)
+                                    # Fire callback until it returns True (meaningful content found)
+                                    if not first_token_acquired:
+                                        ttft_ns = message.perf_ns - record.start_perf_ns
+                                        first_token_acquired = (
+                                            await first_token_callback(ttft_ns, message)
+                                        )
+                            else:
+                                # Fast path: no callback, just collect responses
+                                async for message in sse_messages:
+                                    reader_cls.inspect_message_for_error(message)
+                                    record.responses.append(message)
+                        finally:
+                            # Parsing can fail after HTTP EOF; replay still requires success.
+                            _record_response_body_eof(response, record)
+                        # Only finite replay needs EOF validation for completion dependencies.
+                        # Ordinary profiling captures EOF in the finally block above.
                         if transport_eof_callback is not None:
                             _record_response_body_eof(
                                 response, record, transport_eof_callback
@@ -328,10 +347,9 @@ class AioHttpClient(AIPerfLoggerMixin):
 
                         if is_binary:
                             raw_bytes = await response.read()
-                            if transport_eof_callback is not None:
-                                _record_response_body_eof(
-                                    response, record, transport_eof_callback
-                                )
+                            _record_response_body_eof(
+                                response, record, transport_eof_callback
+                            )
                             record.end_perf_ns = time.perf_counter_ns()
                             record.responses.append(
                                 BinaryResponse(
@@ -341,11 +359,10 @@ class AioHttpClient(AIPerfLoggerMixin):
                                 )
                             )
                         else:
-                            if transport_eof_callback is not None:
-                                await response.read()
-                                _record_response_body_eof(
-                                    response, record, transport_eof_callback
-                                )
+                            await response.read()
+                            _record_response_body_eof(
+                                response, record, transport_eof_callback
+                            )
                             raw_response = await response.text()
                             record.end_perf_ns = time.perf_counter_ns()
                             record.responses.append(
@@ -499,6 +516,7 @@ class AioHttpClient(AIPerfLoggerMixin):
 
         # Create trace data outside the task so we can access it after cancellation
         trace_data = AioHttpTraceData()
+        record = RequestRecord(start_perf_ns=start_perf_ns, trace_data=trace_data)
 
         request_task = asyncio.create_task(
             self._request(
@@ -508,7 +526,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                 data=payload,
                 on_request_sent=request_sent,
                 first_token_callback=first_token_callback,
-                trace_data=trace_data,
+                record=record,
                 connector=connector,
                 connector_owner=connector_owner,
                 **kwargs,
@@ -525,7 +543,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         try:
             await asyncio.wait_for(request_sent.wait(), timeout=send_timeout)
         except TimeoutError:
-            # Request never got sent - cancel and return error
+            # Unknown-length uploads can reach response EOF without setting request_sent.
             request_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await request_task
@@ -533,6 +551,7 @@ class AioHttpClient(AIPerfLoggerMixin):
             return RequestRecord(
                 start_perf_ns=start_perf_ns,
                 end_perf_ns=end_perf_ns,
+                response_body_eof_perf_ns=record.response_body_eof_perf_ns,
                 trace_data=trace_data,
                 error=ErrorDetails(
                     type="RequestSendTimeout",
@@ -558,6 +577,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                 start_perf_ns=start_perf_ns,
                 end_perf_ns=end_perf_ns,
                 cancellation_perf_ns=end_perf_ns,
+                response_body_eof_perf_ns=record.response_body_eof_perf_ns,
                 trace_data=trace_data,
                 error=ErrorDetails(
                     type="RequestCancellationError",

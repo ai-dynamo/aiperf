@@ -2651,7 +2651,11 @@ class CLIConfig(BaseConfig):
         AgenticReplayLifecycle,
         Field(
             default=AgenticReplayLifecycle.STEADY_STATE,
-            description="Agentic replay admission: recycle traces or replay each root once.",
+            description="Agentic replay admission: steady-state recycles traces; finite "
+            "selects agentic replay timing and runs each eligible root from turn 0 once, "
+            "ending after all descendants finish. Finite requires HTTP and a profiling "
+            "concurrency phase without warmup, stop conditions, cancellation, or "
+            "trace-delay compression.",
         ),
         CLIParameter(name=("--agentic-replay-lifecycle",), group=Groups.LOAD_GENERATOR),
     ] = AgenticReplayLifecycle.STEADY_STATE

@@ -563,6 +563,8 @@ class TestAioHttpTransportCancellation:
             mock_response.reason = "OK"
             mock_response.headers = {}
             mock_response.content_type = "application/json"
+            mock_response.read = AsyncMock(return_value=b'{"result": "ok"}')
+            mock_response.content.at_eof.return_value = True
             mock_response.text = AsyncMock(return_value='{"result": "ok"}')
             mock_response.__aenter__ = AsyncMock(return_value=mock_response)
             mock_response.__aexit__ = AsyncMock(return_value=None)

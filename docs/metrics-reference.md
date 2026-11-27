@@ -329,6 +329,7 @@ full_decode_duration_ns = request.end_perf_ns - first_qualifying_response.perf_n
 - It includes terminal serialization, transport, and client-processing overhead.
 - It requires an explicit request-end timestamp and at least one qualifying parsed response. Its end is always `request.end_perf_ns`, even when `--allow-empty-content` changes the shared response timeline.
 - It cannot be reconstructed from existing profile exports. The exported `request_end_ns` is stamped at the last streamed response chunk, whereas this metric anchors on the request's own completion timestamp, so `(request_end_ns - request_start_ns) - time_to_first_token_ns` omits exactly the post-final-chunk tail that Full Decode Duration is meant to capture.
+- The optional exported `metadata.response_body_eof_ns` records the HTTP body-EOF observation, including fully read error responses. It is distinct from `request.end_perf_ns`, which can include client processing after EOF. The EOF field does not change Full Decode Duration or require a qualifying content response.
 
 ---
 
