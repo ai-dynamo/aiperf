@@ -565,6 +565,25 @@ class TestExplicitCustomDatasetType:
         assert isinstance(composer.loader, MultiTurnDatasetLoader)
         assert len(convs) == 1
 
+    def test_multi_turn_uuid_only_images_with_in_text_tokens_autodetects_multi_turn(
+        self, tmp_path: Path, mock_tokenizer: Mock
+    ) -> None:
+        jsonl = tmp_path / "mt_image_uuids.jsonl"
+        jsonl.write_text(
+            '{"session_id": "s", "turns": [{"image_uuids": ["cached-image"], "in_text_tokens": 32}]}\n'
+        )
+        cli_config = CLIConfig(
+            model_names=["test-model"],
+            input_file=str(jsonl),
+        )
+        composer = CustomDatasetComposer(
+            run=make_run(cli_config), tokenizer=mock_tokenizer
+        )
+        convs = composer.create_dataset()
+        assert isinstance(composer.loader, MultiTurnDatasetLoader)
+        assert len(convs) == 1
+        assert convs[0].turns[0].images[0].uuids == ["cached-image"]
+
     def test_random_pool_routes_to_random_pool_loader(self, tmp_path, mock_tokenizer):
         """`--custom-dataset-type random-pool` must produce a RandomPoolDatasetLoader."""
         from aiperf.config.flags.cli_config import CLIConfig

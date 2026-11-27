@@ -51,7 +51,17 @@ __all__ = ["DagJsonlLoader", "DagLoadError"]
 
 
 _MULTI_TURN_MODALITY_KEYS: frozenset[str] = frozenset(
-    {"text", "texts", "image", "images", "audio", "audios", "video", "videos"}
+    {
+        "text",
+        "texts",
+        "image",
+        "images",
+        "image_uuids",
+        "audio",
+        "audios",
+        "video",
+        "videos",
+    }
 )
 
 

@@ -258,6 +258,13 @@ def _resolve_media_ref_part(
         )
 
 
+def _require_user_media_ref_role(role: Any) -> None:
+    if role != "user":
+        raise ValueError(
+            f"media_ref content part requires message role='user' (got role={role!r})"
+        )
+
+
 def _validate_message_media_refs(
     messages: list[dict[str, Any]], segments: list[DagMediaSegment]
 ) -> None:
@@ -270,8 +277,10 @@ def _validate_message_media_refs(
         content = msg.get("content")
         if not isinstance(content, list):
             continue
+        role = msg.get("role")
         for part in content:
             if isinstance(part, dict) and part.get("type") == "media_ref":
+                _require_user_media_ref_role(role)
                 _resolve_media_ref_part(part, segments, by_hash)
                 ref_count += 1
     if segments and ref_count == 0:

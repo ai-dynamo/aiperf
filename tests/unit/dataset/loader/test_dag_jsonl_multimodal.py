@@ -10,7 +10,7 @@ import base64
 import hashlib
 import io
 import socket
-import stat
+import subprocess
 import sys
 import threading
 from collections.abc import Iterator
@@ -36,6 +36,7 @@ from aiperf.dataset.loader.dag_jsonl import DagJsonlLoader, DagLoadError
 from aiperf.dataset.loader.dag_jsonl_media import (
     DagMultimodalMaterializer,
     LocalMediaHttpServer,
+    _build_wire_parts_from_uris,
     _encode_mp4_with_codec,
     compute_mixed_block_hashes,
     default_media_uuid,
@@ -307,6 +308,112 @@ class TestDagMultimodalModels:
         assert asst_text.role == "assistant"
         assert user_media.role == "user"
 
+    def test_media_ref_rejected_in_non_user_authored_messages(
+        self, tmp_path: Path
+    ) -> None:
+        seg = DagMediaSegment(media_hash="img0", kind="image", width=64, height=64)
+        for bad_role in ("system", "assistant", "tool"):
+            msg: dict[str, Any] = {
+                "role": bad_role,
+                "content": [{"type": "media_ref", "media_hash": "img0"}],
+            }
+            if bad_role == "tool":
+                msg["tool_call_id"] = "call_1"
+            with pytest.raises(ValidationError, match="requires message role='user'"):
+                DagTurn(messages=[msg], media_segments=[seg])
+
+        bad_sys_path = _write_dag(
+            tmp_path,
+            [
+                {
+                    "session_id": "root",
+                    "turns": [
+                        {
+                            "media_segments": [
+                                {
+                                    "media_hash": "img0",
+                                    "kind": "image",
+                                    "width": 64,
+                                    "height": 64,
+                                }
+                            ],
+                            "messages": [
+                                {
+                                    "role": "system",
+                                    "content": [
+                                        {"type": "media_ref", "media_hash": "img0"}
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+            name="bad_sys_media_ref.dag.jsonl",
+        )
+        with pytest.raises(DagLoadError, match="requires message role='user'"):
+            DagJsonlLoader(bad_sys_path).load()
+
+        mat = DagMultimodalMaterializer()
+        with (
+            patch.object(mat, "render_media_parts") as mock_render,
+            pytest.raises(ValueError, match="requires message role='user'"),
+        ):
+            mat._resolve_authored_messages(
+                [
+                    {
+                        "role": "system",
+                        "content": [{"type": "media_ref", "media_hash": "img0"}],
+                    }
+                ],
+                [seg],
+            )
+        mock_render.assert_not_called()
+
+        valid_path = _write_dag(
+            tmp_path,
+            [
+                {
+                    "session_id": "root",
+                    "turns": [
+                        {
+                            "media_segments": [
+                                {
+                                    "media_hash": "img0",
+                                    "kind": "image",
+                                    "width": 64,
+                                    "height": 64,
+                                }
+                            ],
+                            "messages": [
+                                {
+                                    "role": "system",
+                                    "content": [{"type": "text", "text": "Rubric."}],
+                                },
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {"type": "media_ref", "media_hash": "img0"}
+                                    ],
+                                },
+                                {"role": "assistant", "content": "Prior answer."},
+                            ],
+                        }
+                    ],
+                }
+            ],
+            name="ok_mixed_authored.dag.jsonl",
+        )
+        convs = DagJsonlLoader(valid_path).load()
+        raw_msgs = convs[0].turns[0].raw_messages
+        assert raw_msgs[0] == {
+            "role": "system",
+            "content": [{"type": "text", "text": "Rubric."}],
+        }
+        assert raw_msgs[1]["role"] == "user"
+        assert raw_msgs[1]["content"][0]["type"] == "image_url"
+        assert raw_msgs[2] == {"role": "assistant", "content": "Prior answer."}
+
     def test_ambiguous_hash_only_media_ref_and_span_require_media_index(self) -> None:
         seg_small = DagMediaSegment(
             media_hash="shared_key", kind="image", width=64, height=64
@@ -351,6 +458,8 @@ class TestDagMultimodalModels:
             param({"session_id": "root", "turns": [{"in_text_tokens": 0}]}, False, False, id="zero_in_text_tokens"),
             param({"session_id": "root", "turns": [{"in_text_tokens": True}]}, False, False, id="bool_in_text_tokens"),
             param({"session_id": "s1", "turns": [{"text": "plain multi-turn"}]}, False, True, id="multi_turn_text_only"),
+            param({"session_id": "s1", "turns": [{"image_uuids": ["cached-image"]}]}, False, True, id="multi_turn_image_uuids_only"),
+            param({"session_id": "s1", "turns": [{"image_uuids": ["cached-image"], "in_text_tokens": 32}]}, False, True, id="multi_turn_image_uuids_with_in_text_tokens"),
             param({"session_id": "s1", "turns": [{"text": "hi", "media_segments": []}]}, False, True, id="multi_turn_empty_media_segments"),
             param({"session_id": "s1", "turns": [{"text": "hi", "prompt_spans": []}]}, False, True, id="multi_turn_empty_prompt_spans"),
             param(
@@ -629,12 +738,55 @@ class TestDeterministicSynthesisAndBlockHashes:
         assert dec_proc.stdout.closed is True
         assert dec_proc.stderr.closed is True
 
+        enc_start_fail = _RunningFakePopen()
+        with (
+            patch("subprocess.Popen", return_value=enc_start_fail),
+            patch(
+                "aiperf.dataset.loader.dag_jsonl_media._StderrTailDrain",
+                side_effect=RuntimeError("can't start new thread"),
+            ),
+            pytest.raises(RuntimeError, match="can't start new thread"),
+        ):
+            _encode_mp4_with_codec(
+                "/usr/bin/ffmpeg",
+                "libx264",
+                iter_deterministic_rgb_frames(16, 16, 2, "drain_fail"),
+                tmp_path / "drain_fail.mp4",
+                width=16,
+                height=16,
+                fps=24.0,
+            )
+        assert enc_start_fail.killed is True
+        assert enc_start_fail.waited is True
+        assert enc_start_fail.stdin.closed is True
+        assert enc_start_fail.stderr.closed is True
+
+        dec_start_fail = _RunningFakePopen(stdout_payload=bad_marker_y4m)
+        with (
+            patch("subprocess.Popen", return_value=dec_start_fail),
+            patch(
+                "aiperf.dataset.loader.dag_jsonl_media._StderrTailDrain",
+                side_effect=RuntimeError("can't start new thread"),
+            ),
+            pytest.raises(RuntimeError, match="can't start new thread"),
+        ):
+            verify_mp4_decodable(
+                mp4_path,
+                expected_frames=2,
+                expected_width=64,
+                expected_height=64,
+                ffmpeg_bin="/usr/bin/ffmpeg",
+            )
+        assert dec_start_fail.killed is True
+        assert dec_start_fail.waited is True
+        assert dec_start_fail.stdout.closed is True
+        assert dec_start_fail.stderr.closed is True
+
     def test_ffmpeg_pipes_drain_large_concurrent_stderr_without_deadlock(
         self, tmp_path: Path
     ) -> None:
         fake_ff = tmp_path / "fake_ffmpeg.py"
         fake_ff.write_text(
-            f"#!{sys.executable}\n"
             "import pathlib, sys\n"
             "args = sys.argv[1:]\n"
             "if 'yuv4mpegpipe' in args:\n"
@@ -653,32 +805,41 @@ class TestDeterministicSynthesisAndBlockHashes:
             "sys.exit(1)\n",
             encoding="utf-8",
         )
-        fake_ff.chmod(fake_ff.stat().st_mode | stat.S_IXUSR)
+        real_popen = subprocess.Popen
 
-        rc, stderr_tail = _encode_mp4_with_codec(
-            str(fake_ff),
-            "libx264",
-            iter_deterministic_rgb_frames(32, 32, 8, "verbose_stderr"),
-            tmp_path / "enc.mp4",
-            width=32,
-            height=32,
-            fps=12.0,
-        )
-        assert rc == 1
-        assert len(stderr_tail) <= 4096
-        assert b"encode_tail_marker" in stderr_tail
-
-        mp4_path = tmp_path / "dec.mp4"
-        mp4_path.write_bytes(b"\x00" * 256)
-        with pytest.raises(RuntimeError, match="decode_tail_marker"):
-            verify_mp4_decodable(
-                mp4_path,
-                expected_frames=2,
-                expected_width=16,
-                expected_height=16,
-                expected_fps=12.0,
-                ffmpeg_bin=str(fake_ff),
+        def _python_script_popen(
+            cmd: list[str], *args: Any, **kwargs: Any
+        ) -> subprocess.Popen[bytes]:
+            rewritten = (
+                [sys.executable, *cmd] if cmd and cmd[0] == str(fake_ff) else cmd
             )
+            return real_popen(rewritten, *args, **kwargs)
+
+        with patch("subprocess.Popen", side_effect=_python_script_popen):
+            rc, stderr_tail = _encode_mp4_with_codec(
+                str(fake_ff),
+                "libx264",
+                iter_deterministic_rgb_frames(32, 32, 8, "verbose_stderr"),
+                tmp_path / "enc.mp4",
+                width=32,
+                height=32,
+                fps=12.0,
+            )
+            assert rc == 1
+            assert len(stderr_tail) <= 4096
+            assert b"encode_tail_marker" in stderr_tail
+
+            mp4_path = tmp_path / "dec.mp4"
+            mp4_path.write_bytes(b"\x00" * 256)
+            with pytest.raises(RuntimeError, match="decode_tail_marker"):
+                verify_mp4_decodable(
+                    mp4_path,
+                    expected_frames=2,
+                    expected_width=16,
+                    expected_height=16,
+                    expected_fps=12.0,
+                    ffmpeg_bin=str(fake_ff),
+                )
 
     @pytest.mark.ffmpeg
     def test_mp4_synthesis_real_ffmpeg_roundtrip(self, tmp_path: Path) -> None:
@@ -1452,10 +1613,120 @@ class TestDagLoaderMultimodalDeduplicationAndReplay:
             prepare_materializer_for_conversations([bad_conv], materializer=shared_mat)
         assert shared_mat.is_frozen_for_timed_replay is True
 
+        second_conv = DagConversation.model_validate(
+            {
+                "session_id": "ok2",
+                "turns": [
+                    {
+                        "media_segments": [
+                            {
+                                "media_hash": "img_second",
+                                "kind": "image",
+                                "width": 48,
+                                "height": 48,
+                            }
+                        ],
+                        "in_text_tokens": 4,
+                    }
+                ],
+            }
+        )
+        uncached_probe = DagMediaSegment(
+            media_hash="uncached_during_prep", kind="image", width=32, height=32
+        )
+        observed_frozen_during_prep: list[bool] = []
+        orig_compute_uris = shared_mat._compute_segment_uris
+
+        def _checked_compute_uris(seg: DagMediaSegment) -> tuple[str, ...]:
+            observed_frozen_during_prep.append(shared_mat.is_frozen_for_timed_replay)
+            with pytest.raises(RuntimeError, match="frozen timed replay"):
+                shared_mat.render_media_parts(uncached_probe)
+            return orig_compute_uris(seg)
+
+        with patch.object(
+            shared_mat, "_compute_segment_uris", side_effect=_checked_compute_uris
+        ):
+            prepare_materializer_for_conversations(
+                [second_conv], materializer=shared_mat
+            )
+        assert observed_frozen_during_prep == [True]
+        assert shared_mat.is_frozen_for_timed_replay is True
+        assert shared_mat.encode_calls_during_timed_replay == 1
+
         shared_mat.clear_staged_cache()
         assert shared_mat._staged_uris == {}
         assert shared_mat._staged_wire_parts == {}
         assert shared_mat._staged_text == {}
+
+    @pytest.mark.asyncio
+    async def test_set_media_base_url_serializes_with_async_stage_turns(
+        self, tmp_path: Path
+    ) -> None:
+        turns = [
+            DagTurn(
+                media_segments=[
+                    DagMediaSegment(
+                        media_hash=f"img_lock_{idx}",
+                        kind="image",
+                        width=32,
+                        height=32,
+                    )
+                ],
+                in_text_tokens=4,
+            )
+            for idx in range(2)
+        ]
+        mat = DagMultimodalMaterializer(
+            media_scratch_dir=tmp_path,
+            media_base_url="http://127.0.0.1:9001",
+        )
+        real_stage_lock = mat._stage_lock
+        seen_lock_threads: set[int] = set()
+        meta_lock = threading.Lock()
+        setter_attempted_lock = threading.Event()
+        entered_wire_pass = threading.Event()
+        release_wire_pass = threading.Event()
+
+        class _TrackingRLock:
+            def __enter__(self) -> Any:
+                with meta_lock:
+                    seen_lock_threads.add(threading.get_ident())
+                    if len(seen_lock_threads) >= 2:
+                        setter_attempted_lock.set()
+                return real_stage_lock.__enter__()
+
+            def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool | None:
+                return real_stage_lock.__exit__(exc_type, exc, tb)
+
+        mat._stage_lock = _TrackingRLock()  # type: ignore[assignment]
+        first_variant = True
+
+        def _paused_build_wire(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+            nonlocal first_variant
+            if first_variant:
+                first_variant = False
+                entered_wire_pass.set()
+                assert release_wire_pass.wait(timeout=5.0)
+            return _build_wire_parts_from_uris(*args, **kwargs)
+
+        with patch(
+            "aiperf.dataset.loader.dag_jsonl_media._build_wire_parts_from_uris",
+            side_effect=_paused_build_wire,
+        ):
+            stage_task = asyncio.create_task(mat.async_stage_turns(turns))
+            assert await asyncio.to_thread(entered_wire_pass.wait, 5.0) is True
+            setter_task = asyncio.create_task(
+                asyncio.to_thread(mat.set_media_base_url, "http://127.0.0.1:9002/")
+            )
+            assert await asyncio.to_thread(setter_attempted_lock.wait, 5.0) is True
+            release_wire_pass.set()
+            summary = await stage_task
+            await setter_task
+
+        assert summary.media_base_url == "http://127.0.0.1:9001"
+        assert mat.media_base_url == "http://127.0.0.1:9002"
+        assert mat._staged_uris == {}
+        assert mat._staged_wire_parts == {}
 
     @pytest.mark.asyncio
     async def test_concurrent_load_async_and_cancellation_serialize_initialization(
@@ -1478,22 +1749,39 @@ class TestDagLoaderMultimodalDeduplicationAndReplay:
         path = _write_dag(tmp_path, rows, name="concurrent.dag.jsonl")
         loader = DagJsonlLoader(path)
         entered = threading.Event()
+        second_attempt = threading.Event()
         release = threading.Event()
         parse_calls = 0
         orig_parse = loader._parse_lines
+        real_load_lock = loader._load_lock
+        seen_threads: set[int] = set()
+        meta_lock = threading.Lock()
+
+        class _TrackingLoadLock:
+            def __enter__(self) -> Any:
+                with meta_lock:
+                    seen_threads.add(threading.get_ident())
+                    if len(seen_threads) >= 2:
+                        second_attempt.set()
+                return real_load_lock.__enter__()
+
+            def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool | None:
+                return real_load_lock.__exit__(exc_type, exc, tb)
+
+        loader._load_lock = _TrackingLoadLock()  # type: ignore[assignment]
 
         def _slow_parse() -> None:
             nonlocal parse_calls
             parse_calls += 1
             entered.set()
-            release.wait(timeout=5.0)
+            assert release.wait(timeout=5.0)
             orig_parse()
 
         with patch.object(loader, "_parse_lines", side_effect=_slow_parse):
             t1 = asyncio.create_task(loader.load_async())
-            await asyncio.to_thread(entered.wait, 5.0)
+            assert await asyncio.to_thread(entered.wait, 5.0) is True
             t2 = asyncio.create_task(loader.load_async())
-            await asyncio.sleep(0)
+            assert await asyncio.to_thread(second_attempt.wait, 5.0) is True
             t1.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await t1

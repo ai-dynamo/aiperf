@@ -459,6 +459,27 @@ def _terminate_proc(
     return stderr_data
 
 
+def _cleanup_ffmpeg_proc(
+    proc: subprocess.Popen[bytes],
+    stderr_drain: _StderrTailDrain | None,
+) -> None:
+    if proc.stdin is not None:
+        with contextlib.suppress(OSError):
+            proc.stdin.close()
+    if proc.poll() is None:
+        _terminate_proc(proc, stderr_drain)
+    else:
+        proc.wait()
+        if stderr_drain is not None:
+            stderr_drain.finish()
+    if proc.stdout is not None:
+        with contextlib.suppress(OSError):
+            proc.stdout.close()
+    if proc.stderr is not None:
+        with contextlib.suppress(OSError):
+            proc.stderr.close()
+
+
 def _verify_y4m_stream(
     proc: subprocess.Popen[bytes],
     path: Path,
@@ -537,8 +558,9 @@ def verify_mp4_decodable(
         stderr=subprocess.PIPE,
     )
     assert proc.stdout is not None and proc.stderr is not None
-    stderr_drain = _StderrTailDrain(proc.stderr)
+    stderr_drain: _StderrTailDrain | None = None
     try:
+        stderr_drain = _StderrTailDrain(proc.stderr)
         rc, decoded_frames, stderr_bytes = _verify_y4m_stream(
             proc,
             path,
@@ -549,15 +571,7 @@ def verify_mp4_decodable(
             expected_fps=expected_fps,
         )
     finally:
-        if proc.poll() is None:
-            _terminate_proc(proc, stderr_drain)
-        else:
-            proc.wait()
-            stderr_drain.finish()
-        with contextlib.suppress(OSError):
-            proc.stdout.close()
-        with contextlib.suppress(OSError):
-            proc.stderr.close()
+        _cleanup_ffmpeg_proc(proc, stderr_drain)
 
     if rc != 0 or decoded_frames != expected_frames:
         stderr_snippet = stderr_bytes.decode("utf-8", "ignore").strip()[-200:]
@@ -611,8 +625,9 @@ def _encode_mp4_with_codec(
         stderr=subprocess.PIPE,
     )
     assert proc.stdin is not None and proc.stderr is not None
-    stderr_drain = _StderrTailDrain(proc.stderr)
+    stderr_drain: _StderrTailDrain | None = None
     try:
+        stderr_drain = _StderrTailDrain(proc.stderr)
         for frame in frames:
             try:
                 proc.stdin.write(memoryview(frame).cast("B"))
@@ -624,15 +639,7 @@ def _encode_mp4_with_codec(
         stderr_bytes = stderr_drain.finish()
         return rc, stderr_bytes
     finally:
-        with contextlib.suppress(OSError):
-            proc.stdin.close()
-        if proc.poll() is None:
-            _terminate_proc(proc, stderr_drain)
-        else:
-            proc.wait()
-            stderr_drain.finish()
-        with contextlib.suppress(OSError):
-            proc.stderr.close()
+        _cleanup_ffmpeg_proc(proc, stderr_drain)
 
 
 def write_deterministic_h264_mp4(
@@ -921,6 +928,10 @@ def _file_stat_token(
     return (str(path.resolve()), st.st_mtime_ns, st.st_size, sig)
 
 
+def _staged_paths_bytes(paths: list[Path]) -> int:
+    return sum(p.stat().st_size for p in paths if p.is_file())
+
+
 class DagMultimodalMaterializer:
     """Content-addressed synthesizer and untimed stager for ``dag_jsonl`` turns."""
 
@@ -972,10 +983,11 @@ class DagMultimodalMaterializer:
 
     def set_media_base_url(self, base_url: str | None) -> None:
         """Update the HTTP base URL for staged media and invalidate cached wire dicts."""
-        self.media_base_url = base_url.rstrip("/") if base_url else None
-        self._media_cache.clear()
-        self._staged_wire_parts.clear()
-        self._staged_uris.clear()
+        with self._stage_lock:
+            self.media_base_url = base_url.rstrip("/") if base_url else None
+            self._media_cache.clear()
+            self._staged_wire_parts.clear()
+            self._staged_uris.clear()
 
     def freeze_for_timed_replay(self, frozen: bool = True) -> None:
         """Forbid any uncached media synthesis while timed benchmarking is active."""
@@ -1196,7 +1208,16 @@ class DagMultimodalMaterializer:
 
     def stage_media_segment(self, segment: DagMediaSegment) -> list[Path]:
         """Materialize and decode-verify ``segment`` on disk in ``media_scratch_dir``."""
-        self._guard_not_frozen(segment.media_hash)
+        return self._stage_media_segment(segment, allow_frozen=False)
+
+    def _stage_media_segment(
+        self,
+        segment: DagMediaSegment,
+        *,
+        allow_frozen: bool,
+    ) -> list[Path]:
+        if not allow_frozen:
+            self._guard_not_frozen(segment.media_hash)
         if self.media_scratch_dir is None:
             raise RuntimeError(
                 "stage_media_segment requires media_scratch_dir to be configured"
@@ -1292,16 +1313,20 @@ class DagMultimodalMaterializer:
     def render_media_parts(self, segment: DagMediaSegment) -> list[dict[str, Any]]:
         """Render OpenAI ``image_url`` / ``video_url`` content parts for ``segment``."""
         wire_key = self._wire_cache_key(segment)
-        if wire_key in self._staged_wire_parts:
-            return _clone_media_parts(self._staged_wire_parts[wire_key])
-        if wire_key in self._media_cache:
-            self._media_cache.move_to_end(wire_key)
-            return _clone_media_parts(self._media_cache[wire_key])
+        staged_parts = self._staged_wire_parts.get(wire_key)
+        if staged_parts is not None:
+            return _clone_media_parts(staged_parts)
+        cached_parts = self._media_cache.get(wire_key)
+        if cached_parts is not None:
+            with contextlib.suppress(KeyError):
+                self._media_cache.move_to_end(wire_key)
+            return _clone_media_parts(cached_parts)
 
         uri_key = self._uri_cache_key(segment)
-        if uri_key in self._staged_uris:
+        staged_uris = self._staged_uris.get(uri_key)
+        if staged_uris is not None:
             parts = _build_wire_parts_from_uris(
-                self._staged_uris[uri_key],
+                staged_uris,
                 segment,
                 video_wire_mode=self.video_wire_mode,
                 emit_media_uuid=self.emit_media_uuid,
@@ -1381,14 +1406,16 @@ class DagMultimodalMaterializer:
                 rendered = self.render_span_text(span.span_id, span.tokens)
                 self._staged_text[(span.span_id, max(1, int(span.tokens)))] = rendered
 
-    def stage_turns(
+    def _collect_turn_media_targets(
         self,
         turns: Iterable[DagTurn],
         *,
         fallback_keys: Iterable[str] | None = None,
-    ) -> MediaStagingSummary:
-        """Untimed pre-generation pass across all ``turns`` in a DAG dataset."""
-        t0 = time.perf_counter()
+    ) -> tuple[
+        OrderedDict[tuple[Any, ...], DagMediaSegment],
+        OrderedDict[tuple[Any, ...], DagMediaSegment],
+        int,
+    ]:
         unique_segments: OrderedDict[tuple[Any, ...], DagMediaSegment] = OrderedDict()
         wire_variants: OrderedDict[tuple[Any, ...], DagMediaSegment] = OrderedDict()
         total_refs = 0
@@ -1400,33 +1427,64 @@ class DagMultimodalMaterializer:
                 total_refs += 1
                 unique_segments.setdefault(seg.cache_key, seg)
                 wire_variants.setdefault((*seg.cache_key, seg.uuid), seg)
+        return unique_segments, wire_variants, total_refs
 
-        unique_images = 0
-        unique_videos = 0
-        staged_bytes = 0
-        for seg in unique_segments.values():
-            if self.media_scratch_dir is not None:
-                paths = self.stage_media_segment(seg)
-                staged_bytes += sum(p.stat().st_size for p in paths if p.is_file())
-            uri_key = self._uri_cache_key(seg)
-            if uri_key not in self._staged_uris:
-                self._staged_uris[uri_key] = self._compute_segment_uris(seg)
-            if seg.kind == "image":
-                unique_images += 1
-            else:
-                unique_videos += 1
+    def stage_turns(
+        self,
+        turns: Iterable[DagTurn],
+        *,
+        fallback_keys: Iterable[str] | None = None,
+    ) -> MediaStagingSummary:
+        """Untimed pre-generation pass across all ``turns`` in a DAG dataset."""
+        return self._stage_turns(turns, fallback_keys=fallback_keys, allow_frozen=False)
 
-        for variant in wire_variants.values():
-            uris = self._staged_uris[self._uri_cache_key(variant)]
-            parts = _build_wire_parts_from_uris(
-                uris,
-                variant,
-                video_wire_mode=self.video_wire_mode,
-                emit_media_uuid=self.emit_media_uuid,
+    def _stage_turns(
+        self,
+        turns: Iterable[DagTurn],
+        *,
+        fallback_keys: Iterable[str] | None = None,
+        allow_frozen: bool,
+    ) -> MediaStagingSummary:
+        t0 = time.perf_counter()
+        with self._stage_lock:
+            unique_segments, wire_variants, total_refs = (
+                self._collect_turn_media_targets(turns, fallback_keys=fallback_keys)
             )
-            wire_key = self._wire_cache_key(variant)
-            self._staged_wire_parts[wire_key] = parts
-            self._put_media_cache(wire_key, parts)
+            unique_images = 0
+            unique_videos = 0
+            staged_bytes = 0
+            for seg in unique_segments.values():
+                if self.media_scratch_dir is not None:
+                    paths = self._stage_media_segment(seg, allow_frozen=allow_frozen)
+                    staged_bytes += _staged_paths_bytes(paths)
+                uri_key = self._uri_cache_key(seg)
+                if uri_key not in self._staged_uris:
+                    if not allow_frozen:
+                        self._guard_not_frozen(seg.media_hash)
+                    self._staged_uris[uri_key] = self._compute_segment_uris(seg)
+                if seg.kind == "image":
+                    unique_images += 1
+                else:
+                    unique_videos += 1
+
+            for variant in wire_variants.values():
+                uris = self._staged_uris[self._uri_cache_key(variant)]
+                parts = _build_wire_parts_from_uris(
+                    uris,
+                    variant,
+                    video_wire_mode=self.video_wire_mode,
+                    emit_media_uuid=self.emit_media_uuid,
+                )
+                wire_key = self._wire_cache_key(variant)
+                self._staged_wire_parts[wire_key] = parts
+                self._put_media_cache(wire_key, parts)
+
+            scratch_str = (
+                str(self.media_scratch_dir)
+                if self.media_scratch_dir is not None
+                else None
+            )
+            base_url = self.media_base_url
 
         return MediaStagingSummary(
             unique_images=unique_images,
@@ -1435,12 +1493,8 @@ class DagMultimodalMaterializer:
             deduplicated_references=max(0, total_refs - len(unique_segments)),
             staged_bytes=staged_bytes,
             staging_wall_s=round(time.perf_counter() - t0, 4),
-            media_scratch_dir=(
-                str(self.media_scratch_dir)
-                if self.media_scratch_dir is not None
-                else None
-            ),
-            media_base_url=self.media_base_url,
+            media_scratch_dir=scratch_str,
+            media_base_url=base_url,
         )
 
     async def async_stage_turns(
@@ -1482,9 +1536,15 @@ class DagMultimodalMaterializer:
             if not isinstance(content, list):
                 resolved.append(dict(msg))
                 continue
+            role = msg.get("role")
             new_parts: list[dict[str, Any]] = []
             for part in content:
                 if isinstance(part, dict) and part.get("type") == "media_ref":
+                    if role != "user":
+                        raise ValueError(
+                            f"media_ref content part requires message role='user' "
+                            f"(got role={role!r})"
+                        )
                     seg = (
                         segments[part["media_index"]]
                         if part.get("media_index") is not None
@@ -1603,16 +1663,9 @@ def prepare_materializer_for_conversations(
     fallback_keys = [key for key, _ in keyed_turns]
     if materializer is not None:
         with materializer._stage_lock:
-            was_frozen = materializer.is_frozen_for_timed_replay
-            materializer.freeze_for_timed_replay(False)
-            try:
-                summary = materializer.stage_turns(
-                    all_turns, fallback_keys=fallback_keys
-                )
-            except Exception:
-                if was_frozen:
-                    materializer.freeze_for_timed_replay(True)
-                raise
+            summary = materializer._stage_turns(
+                all_turns, fallback_keys=fallback_keys, allow_frozen=True
+            )
             materializer.freeze_for_timed_replay(True)
         return materializer, summary
 
