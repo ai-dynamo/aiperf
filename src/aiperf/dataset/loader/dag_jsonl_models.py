@@ -20,13 +20,265 @@ Unknown top-level keys on either a conversation or a turn are rejected at
 load time so typos surface immediately.
 """
 
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import ConfigDict, Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from aiperf.common.enums import ConversationContextMode
+from aiperf.common.finite import FiniteFloat
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.dataset.loader.models import validate_chat_messages
+
+
+class DagMediaSegment(AIPerfBaseModel):
+    """Content-addressed geometric descriptor of one synthetic image or video span.
+
+    Carries zero raw pixel bytes and zero local file paths. Identical
+    ``(kind, media_hash, width, height, fps, num_frames)`` tuples across turns,
+    ``FORK`` branches, or ``SPAWN`` sub-agents deterministically materialize to
+    byte-identical media payloads, enabling server-side vision-encoder and KV
+    prefix cache reuse.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
+    media_hash: str = Field(
+        min_length=1,
+        max_length=128,
+        description="Content-addressed identifier seeding deterministic media synthesis.",
+    )
+    kind: Literal["image", "video"] = Field(
+        description="Modality of this synthetic media segment ('image' or 'video').",
+    )
+    width: int = Field(
+        ge=2,
+        le=16384,
+        description="Media width in pixels (must be even for H.264 yuv420p video).",
+    )
+    height: int = Field(
+        ge=2,
+        le=16384,
+        description="Media height in pixels (must be even for H.264 yuv420p video).",
+    )
+    fps: FiniteFloat = Field(
+        default=24.0,
+        ge=0.0,
+        le=240.0,
+        description="Frame rate in frames per second (used when kind='video').",
+    )
+    num_frames: int = Field(
+        default=1,
+        ge=1,
+        le=4096,
+        description="Number of frames to synthesize (must be 1 when kind='image').",
+    )
+    vis_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        le=1_048_576,
+        description="Optional calibrated merged visual token count for this segment.",
+    )
+    framing_tokens: int = Field(
+        default=2,
+        ge=0,
+        le=65536,
+        description="Vision boundary/timestamp framing token overhead.",
+    )
+    uuid: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+        description="Optional multimodal cache UUID emitted on the OpenAI content part.",
+    )
+
+    @field_validator(
+        "width",
+        "height",
+        "fps",
+        "num_frames",
+        "vis_tokens",
+        "framing_tokens",
+        mode="before",
+    )
+    @classmethod
+    def _reject_bool_numeric_fields(cls, v: Any, info: ValidationInfo) -> Any:
+        if isinstance(v, bool):
+            raise ValueError(
+                f"{info.field_name} must be numeric, not a boolean (got {v!r})"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _validate_geometry(self) -> "DagMediaSegment":
+        if self.kind == "image" and self.num_frames != 1:
+            raise ValueError(
+                f"image segment '{self.media_hash}' must have num_frames=1 "
+                f"(got {self.num_frames})"
+            )
+        if self.kind == "video":
+            if self.width % 2 != 0 or self.height % 2 != 0:
+                raise ValueError(
+                    f"video segment '{self.media_hash}' requires even dimensions "
+                    f"for yuv420p encoding (got {self.width}x{self.height})"
+                )
+            if self.fps <= 0.0:
+                raise ValueError(
+                    f"video segment '{self.media_hash}' requires fps > 0 "
+                    f"(got {self.fps})"
+                )
+        return self
+
+    @property
+    def cache_key(self) -> tuple[str, str, int, int, float, int]:
+        """Content-addressed deduplication key ``(kind, media_hash, w, h, fps, n_frames)``."""
+        eff_fps = round(float(self.fps), 2) if self.kind == "video" else 0.0
+        return (
+            self.kind,
+            self.media_hash,
+            self.width,
+            self.height,
+            eff_fps,
+            self.num_frames,
+        )
+
+
+class DagPromptSpan(AIPerfBaseModel):
+    """Zero-leakage ordered span descriptor for interleaved text and media turns."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
+    kind: Literal["text", "media"] = Field(
+        description="Span modality: 'text' synthesizes tokens; 'media' binds a DagMediaSegment.",
+    )
+    span_id: str = Field(
+        min_length=1,
+        max_length=128,
+        description="Deterministic identifier seeding text token synthesis or naming media_hash.",
+    )
+    tokens: int = Field(
+        ge=1,
+        le=1_048_576,
+        description="Target token count for 'text' spans or recorded token count for 'media' spans.",
+    )
+    media_index: int | None = Field(
+        default=None,
+        ge=0,
+        le=4096,
+        description="Zero-based index into DagTurn.media_segments when kind='media'.",
+    )
+    role: Literal["system", "user", "assistant", "tool"] = Field(
+        default="user",
+        description="OpenAI message role; consecutive spans with matching role merge into one message.",
+    )
+
+    @field_validator("tokens", "media_index", mode="before")
+    @classmethod
+    def _reject_bool_span_ints(cls, v: Any, info: ValidationInfo) -> Any:
+        if isinstance(v, bool):
+            raise ValueError(
+                f"{info.field_name} must be an integer, not a boolean (got {v!r})"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _validate_span_kind(self) -> "DagPromptSpan":
+        if self.kind == "text" and self.media_index is not None:
+            raise ValueError(
+                f"prompt span '{self.span_id}' has kind='text' so media_index must be omitted"
+            )
+        return self
+
+
+def _resolve_media_ref_part(
+    part: dict[str, Any],
+    segments: list[DagMediaSegment],
+    by_hash: dict[str, list[int]],
+) -> None:
+    """Validate one ``{"type": "media_ref", ...}`` content part against ``segments``."""
+    ref_idx = part.get("media_index")
+    ref_hash = part.get("media_hash")
+    if ref_idx is None and ref_hash is None:
+        raise ValueError(
+            "media_ref content part must specify 'media_hash' or 'media_index'"
+        )
+    if ref_idx is not None:
+        if isinstance(ref_idx, bool) or not isinstance(ref_idx, int):
+            raise ValueError("media_ref 'media_index' must be an integer")
+        if ref_idx < 0 or ref_idx >= len(segments):
+            raise ValueError(
+                f"media_ref media_index={ref_idx} out of range for "
+                f"{len(segments)} media_segments"
+            )
+        if ref_hash is not None and segments[ref_idx].media_hash != ref_hash:
+            raise ValueError(
+                f"media_ref media_hash='{ref_hash}' disagrees with "
+                f"media_segments[{ref_idx}].media_hash='{segments[ref_idx].media_hash}'"
+            )
+        return
+    matches = by_hash.get(str(ref_hash), [])
+    if not matches:
+        raise ValueError(
+            f"media_ref media_hash='{ref_hash}' not found in turn media_segments"
+        )
+
+
+def _validate_message_media_refs(
+    messages: list[dict[str, Any]], segments: list[DagMediaSegment]
+) -> None:
+    """Validate any ``media_ref`` parts inside authored ``messages``."""
+    by_hash: dict[str, list[int]] = {}
+    for idx, seg in enumerate(segments):
+        by_hash.setdefault(seg.media_hash, []).append(idx)
+    ref_count = 0
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "media_ref":
+                _resolve_media_ref_part(part, segments, by_hash)
+                ref_count += 1
+    if segments and ref_count == 0:
+        raise ValueError(
+            "media_segments provided alongside authored 'messages', but no "
+            "{'type': 'media_ref', ...} content part references them"
+        )
+
+
+def _validate_span_media_refs(
+    spans: list[DagPromptSpan],
+    segments: list[DagMediaSegment],
+    in_text_tokens: int | None,
+) -> None:
+    """Validate zero-leakage ``prompt_spans`` / ``media_segments`` consistency."""
+    if not spans and not segments and (in_text_tokens is None or in_text_tokens == 0):
+        raise ValueError(
+            "structural turn requires non-empty prompt_spans, media_segments, "
+            "or positive in_text_tokens"
+        )
+    by_hash: dict[str, list[int]] = {}
+    for idx, seg in enumerate(segments):
+        by_hash.setdefault(seg.media_hash, []).append(idx)
+    fallback_idx = 0
+    for span in spans:
+        if span.kind != "media":
+            continue
+        if span.media_index is not None:
+            if span.media_index >= len(segments):
+                raise ValueError(
+                    f"prompt span '{span.span_id}' media_index={span.media_index} "
+                    f"out of range for {len(segments)} media_segments"
+                )
+            fallback_idx = span.media_index + 1
+        elif span.span_id in by_hash:
+            fallback_idx = by_hash[span.span_id][0] + 1
+        elif fallback_idx < len(segments):
+            fallback_idx += 1
+        else:
+            raise ValueError(
+                f"media prompt span '{span.span_id}' does not match any entry "
+                f"in media_segments (count={len(segments)})"
+            )
 
 
 class DagFork(AIPerfBaseModel):
@@ -106,11 +358,33 @@ class DagTurn(AIPerfBaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     # --- AIPerf-native Turn concepts (top-level) ----------------------------
-    messages: list[dict[str, Any]] = Field(
+    messages: list[dict[str, Any]] | None = Field(
+        default=None,
         description="OpenAI-compatible messages authored for this turn. Each "
         "entry must be a dict with a 'role' key; content may be a string or a "
-        "multimodal parts list. Concatenated onto the session's accumulator "
-        "on each turn (pure append).",
+        "multimodal parts list (including ``{'type': 'media_ref', ...}`` "
+        "references to ``media_segments``). Required unless structural "
+        "synthesis fields (``prompt_spans``, ``media_segments``, or "
+        "``in_text_tokens``) are provided.",
+    )
+    media_segments: list[DagMediaSegment] = Field(
+        default_factory=list,
+        description="Content-addressed image/video descriptors synthesized "
+        "deterministically at load time. Shared ``media_hash`` entries across "
+        "turns or FORK/SPAWN branches materialize to identical media bytes.",
+    )
+    prompt_spans: list[DagPromptSpan] = Field(
+        default_factory=list,
+        description="Zero-leakage ordered interleaved text and media spans "
+        "used to synthesize OpenAI messages when ``messages`` is omitted.",
+    )
+    in_text_tokens: int | None = Field(
+        default=None,
+        ge=0,
+        le=1_048_576,
+        description="Optional text token budget synthesized ahead of "
+        "``media_segments`` when both ``messages`` and ``prompt_spans`` are "
+        "omitted.",
     )
     model: str | None = Field(
         default=None,
@@ -163,21 +437,53 @@ class DagTurn(AIPerfBaseModel):
         "the loader can pass the value through without conversion.",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_messages_presence(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        if "messages" in data and data["messages"] is None:
+            raise ValueError("messages: Input should be a valid list")
+        has_structural = bool(
+            data.get("prompt_spans")
+            or data.get("media_segments")
+            or data.get("in_text_tokens") is not None
+        )
+        if "messages" not in data and not has_structural:
+            raise ValueError(
+                "messages: Field required (or supply prompt_spans / media_segments)"
+            )
+        return data
+
     @model_validator(mode="after")
     def _validate_messages(self) -> "DagTurn":
-        validate_chat_messages(self.messages)
+        if self.messages is not None:
+            if self.prompt_spans:
+                raise ValueError(
+                    "'messages' and 'prompt_spans' are mutually exclusive on DagTurn"
+                )
+            if self.in_text_tokens is not None:
+                raise ValueError(
+                    "'messages' and 'in_text_tokens' are mutually exclusive on DagTurn"
+                )
+            validate_chat_messages(self.messages)
+            _validate_message_media_refs(self.messages, self.media_segments)
+            return self
+        _validate_span_media_refs(
+            self.prompt_spans, self.media_segments, self.in_text_tokens
+        )
         return self
 
-    @field_validator("max_tokens", mode="before")
+    @field_validator("max_tokens", "in_text_tokens", mode="before")
     @classmethod
-    def _reject_bool_max_tokens(cls, v: Any) -> Any:
+    def _reject_bool_max_tokens(cls, v: Any, info: ValidationInfo) -> Any:
         # bool is a subclass of int in Python, so Pydantic accepts True/False
         # for ``int | None`` fields and silently coerces them to 1/0. That
         # makes ``"max_tokens": true`` (a typo or copy-paste from another
         # config shape) round-trip into a 1-token response with no error.
         if isinstance(v, bool):
             raise ValueError(
-                "max_tokens must be an integer, not a boolean (got "
+                f"{info.field_name} must be an integer, not a boolean (got "
                 f"{v!r}); check for a typo in your DAG JSONL file"
             )
         return v

@@ -204,6 +204,51 @@ Each turn is a flat object validated against a strict schema (`DagTurn` in `src/
 
 **Message shape.** Each entry in `messages` is a free-form dict — the only structural requirement is a `role` key, matching `MooncakeTrace`. `content` may be a string, a list of OpenAI multimodal parts (e.g. `[{"type": "text", "text": "..."}, {"type": "image_url", "image_url": {"url": "..."}}]`), or omitted for assistant messages that are purely `tool_calls`. Paste whatever the server expects; AIPerf forwards it verbatim onto the wire.
 
+### Deterministic synthetic multimodal turns (`media_segments` & `prompt_spans`)
+
+To benchmark multimodal agentic DAG workflows (image + video) without embedding gigabytes of raw base64 media or confidential text inside `.dag.jsonl` traces, a turn can declare content-addressed `media_segments` alongside either zero-leakage `prompt_spans` (omitting `messages`) or inline `{"type": "media_ref"}` placeholders inside `messages`:
+
+```jsonc
+{
+  "media_segments": [
+    {
+      "media_hash": "img_ref_01",
+      "kind": "image",
+      "width": 1024,
+      "height": 576,
+      "vis_tokens": 576,
+      "framing_tokens": 2
+    },
+    {
+      "media_hash": "vid_cand_a",
+      "kind": "video",
+      "width": 640,
+      "height": 384,
+      "fps": 24.0,
+      "num_frames": 16,
+      "vis_tokens": 1920,
+      "framing_tokens": 64
+    }
+  ],
+  "prompt_spans": [
+    { "kind": "text",  "span_id": "sys_rubric_v1", "tokens": 128, "role": "system" },
+    { "kind": "text",  "span_id": "turn0_intro",   "tokens": 64,  "role": "user" },
+    { "kind": "media", "span_id": "img_ref_01",    "tokens": 578, "media_index": 0, "role": "user" },
+    { "kind": "media", "span_id": "vid_cand_a",    "tokens": 1984,"media_index": 1, "role": "user" }
+  ],
+  "max_tokens": 128,
+  "extra": { "mm_processor_kwargs": { "do_sample_frames": false } },
+  "spawns": ["evaluator-a", "evaluator-b"]
+}
+```
+
+Key properties:
+
+- **Untimed pre-staging and `media_hash` deduplication.** During dataset configuration (before warmup or timed profiling begins), `DagJsonlLoader` collects every `DagMediaSegment` across all conversations and branches, deduplicates by `(kind, media_hash, width, height, fps, num_frames)`, generates and decode-verifies deterministic RGB PNGs and `yuv420p` MP4 clips once, and freezes the materializer so zero media encoding happens during timed replay.
+- **Cross-turn and cross-branch cache locality.** Repeating the same `media_hash` across turns, `FORK` children, or `SPAWN` sub-agents emits byte-identical media URLs/URIs (and optional `uuid` tags for multimodal embedding caches and `--cache-bust-media-uuids`). Shared `span_id` text spans likewise render byte-identical prefixes.
+- **Hybrid `media_ref` authoring.** Authors who prefer explicit `messages` text can keep `messages` and reference a declared segment via `{"type": "media_ref", "media_hash": "img_ref_01"}` (or `"media_index": 0`).
+- **Visual-token geometry helper.** `aiperf.dataset.generator.multimodal_vistok` provides `compute_image_visual_tokens` and `compute_video_visual_tokens` to calibrate `(width, height, num_frames)` to exact ViT patch/merge visual token budgets (e.g. `qwen3_vl` and `qwen2_5_vl`).
+
 ### FORK mode (prefix-cache testing)
 
 `forks: [session_id, ...]` desugars into FORK-mode branches. When the parent turn completes, each listed child session:
@@ -458,7 +503,7 @@ With neither `--num-conversations` nor `--request-count` supplied, AIPerf logs `
 
 - **Linear multi-turn conversations** — use `multi_turn` or `raw_payload`. DAG is overkill if there is no fork.
 - **Pre-built traces with timestamps** — use `mooncake_trace` with `--fixed-schedule`. DAG mode does not currently support per-turn timestamps.
-- **Synthetic prompt generation** — DAG mode takes authored turn objects as given (messages are appended to the accumulator as-is). There is no synthetic input generator in v1.
+- **Distribution-sampled synthetic conversation lengths** — DAG mode synthesizes deterministic content only for explicitly authored `prompt_spans` / `media_segments` turns; use synthetic mode (`--isl` / `--osl`) when you want random length sampling without a DAG file.
 - **Diamond topologies** — a session with two FORK parents is explicitly rejected. DAG mode ships tree topology only.
 
 ## Related docs
