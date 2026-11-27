@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import asyncio
 import multiprocessing as mp
-import os
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -241,6 +240,7 @@ def validate_tokenizer_early(
     from aiperf.common.tokenizer import (
         BUILTIN_TOKENIZER_NAME,
         TIKTOKEN_ENCODING_NAMES,
+        _is_offline_mode,
     )
     from aiperf.plugin import plugins
 
@@ -302,7 +302,7 @@ def validate_tokenizer_early(
     # ran the prefetch subprocess when only one was set (e.g., the
     # component_integration test harness, which set HF_HUB_OFFLINE only and
     # then hit EPERM in restricted CI containers).
-    if os.environ.get("HF_HUB_OFFLINE") or os.environ.get("TRANSFORMERS_OFFLINE"):
+    if _is_offline_mode():
         logger.info("HF offline mode already set, skipping cache warming")
     else:
         _prefetch_tokenizers(

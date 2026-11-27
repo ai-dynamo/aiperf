@@ -409,6 +409,48 @@ class TestValidatorTiktokenShortCircuit:
 
 
 @pytest.mark.usefixtures("_mock_endpoint_meta")
+class TestValidatorOfflineEnvParsing:
+    """``HF_HUB_OFFLINE``/``TRANSFORMERS_OFFLINE`` are parsed as booleans."""
+
+    @pytest.mark.parametrize("var", ["HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"])
+    @pytest.mark.parametrize("value", ["0", "false", "no", "off"])
+    def test_falsey_value_does_not_skip_prefetch(
+        self, mock_cfg, mock_logger, monkeypatch, var: str, value: str
+    ) -> None:
+        monkeypatch.setenv(var, value)
+        resolution = MagicMock()
+        resolution.is_ambiguous = False
+        resolution.resolved_name = "Qwen/Qwen3-0.6B"
+        mock_cfg.get_model_names.return_value = ["Qwen/Qwen3-0.6B"]
+
+        with (
+            patch.object(Tokenizer, "resolve_alias", return_value=resolution),
+            patch("aiperf.common.tokenizer_validator._prefetch_tokenizers") as prefetch,
+        ):
+            validate_tokenizer_early(mock_cfg, mock_logger)
+
+        prefetch.assert_called_once()
+
+    @pytest.mark.parametrize("var", ["HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"])
+    def test_truthy_value_skips_prefetch(
+        self, mock_cfg, mock_logger, monkeypatch, var: str
+    ) -> None:
+        monkeypatch.setenv(var, "1")
+        resolution = MagicMock()
+        resolution.is_ambiguous = False
+        resolution.resolved_name = "Qwen/Qwen3-0.6B"
+        mock_cfg.get_model_names.return_value = ["Qwen/Qwen3-0.6B"]
+
+        with (
+            patch.object(Tokenizer, "resolve_alias", return_value=resolution),
+            patch("aiperf.common.tokenizer_validator._prefetch_tokenizers") as prefetch,
+        ):
+            validate_tokenizer_early(mock_cfg, mock_logger)
+
+        prefetch.assert_not_called()
+
+
+@pytest.mark.usefixtures("_mock_endpoint_meta")
 class TestValidatorFakeModelFallback:
     """Placeholder model names default to builtin when --tokenizer is unset."""
 
