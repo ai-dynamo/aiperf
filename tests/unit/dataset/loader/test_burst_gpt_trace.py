@@ -251,3 +251,58 @@ class TestMaxOslCapApplied:
         osls = [t.output_length for traces in data.values() for t in traces]
         assert osls == [30]
         assert loader._capped_max_osl == 0
+
+
+class TestFailedRows:
+    """The upstream BurstGPT files with failures record failed requests as
+    Response tokens = 0. Turn.max_tokens requires >= 1, so those rows must be
+    floored to 1 instead of failing conversation building."""
+
+    def test_zero_response_tokens_floored_to_one(self, tmp_path: Path) -> None:
+        rows = [_make_row("0.1", "100", "40"), _make_row("0.2", "50", "0")]
+        path = _make_csv_file(rows, tmp_path)
+        loader = _make_loader(path)
+        data = loader.load_dataset()
+
+        osls = sorted(t.output_length for traces in data.values() for t in traces)
+        assert osls == [1, 40]
+        assert loader._floored_zero_osl == 1
+
+    def test_zero_response_tokens_convert_to_conversations(
+        self, tmp_path: Path
+    ) -> None:
+        rows = [_make_row("0.1", "100", "40"), _make_row("0.2", "50", "0")]
+        path = _make_csv_file(rows, tmp_path)
+        loader = _make_loader(path)
+        conversations = loader.convert_to_conversations(loader.load_dataset())
+
+        max_tokens = sorted(
+            turn.max_tokens for conv in conversations for turn in conv.turns
+        )
+        assert max_tokens == [1, 40]
+
+    def test_filtered_zero_rows_not_counted(self, tmp_path: Path) -> None:
+        rows = [_make_row("0.1", "100", "40"), _make_row("5", "50", "0")]
+        path = _make_csv_file(rows, tmp_path)
+        loader = _make_loader(path)
+        loader._start_offset = 0
+        loader._end_offset = 1000
+        data = loader.load_dataset()
+
+        assert len(data) == 1
+        assert loader._floored_zero_osl == 0
+
+
+class TestEverythingFiltered:
+    def test_offset_window_excluding_every_row_raises(self, tmp_path: Path) -> None:
+        path = _make_csv_file([_make_row("5", "100", "40")], tmp_path)
+        loader = _make_loader(path)
+        loader._start_offset = 0
+        loader._end_offset = 1000
+        with pytest.raises(ValueError, match="offset window"):
+            loader.load_dataset()
+
+    def test_empty_file_still_returns_empty(self, tmp_path: Path) -> None:
+        path = _make_csv_file([], tmp_path)
+        loader = _make_loader(path)
+        assert loader.load_dataset() == {}
