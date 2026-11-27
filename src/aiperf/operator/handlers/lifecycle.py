@@ -22,10 +22,15 @@ from aiperf.operator.client_cache import (
     close_progress_client,
     is_cancellation_requested,
     job_key,
+    mark_completion_retry_pending,
     release_progress_client,
     request_cancellation,
+    resume_owned_completion_claim,
     revoke_cancellation,
     try_claim_completion,
+)
+from aiperf.operator.handlers._completion_retry import (
+    TransientCompletionFetchError,
 )
 from aiperf.operator.handlers._job_identity import (
     StaleAIPerfJobCallback,
@@ -213,6 +218,39 @@ async def on_cancel(
     events.cancelled(body, job_id)
 
 
+async def _claim_or_resume_completion(
+    namespace: str,
+    name: str,
+    body: dict[str, Any],
+    *,
+    key: str,
+    parent_uid: str | None,
+) -> bool:
+    """Return True when this handler call may run ``handle_completion``.
+
+    A kopf retry after this process's own transient fetch failure loses
+    ``try_claim_completion`` (the claim is already ours), so only the
+    owner-verified resume path may re-enter.
+    """
+    if await try_claim_completion(namespace, name, body):
+        logger.info(
+            f"Benchmark completion signal received for {namespace}/{name}, "
+            "fetching results"
+        )
+        return True
+    resumed = await resume_owned_completion_claim(
+        namespace, name, key, expected_uid=parent_uid
+    )
+    if resumed is None:
+        raise kopf.TemporaryError(
+            f"cannot verify completion claim ownership for {namespace}/{name}",
+            delay=5,
+        )
+    if resumed:
+        logger.info(f"Retrying completion for {namespace}/{name} under owned claim")
+    return resumed
+
+
 async def on_benchmark_complete(
     body: dict[str, Any],
     status: dict[str, Any],
@@ -231,6 +269,8 @@ async def on_benchmark_complete(
     Side effects:
         - Attempts to claim completion via ``try_claim_completion`` (durable
           CR annotation); returns silently if another handler already won.
+          A kopf retry after this process's own transient fetch failure
+          re-enters via ``resume_owned_completion_claim`` instead.
         - Delegates to ``handle_completion`` (fetches results, patches CR
           status, updates the job index, emits ``Completed``/``ResultsStored``
           events, deletes the JobSet on success).
@@ -269,23 +309,25 @@ async def on_benchmark_complete(
         )
         return
 
-    if not await try_claim_completion(namespace, name, body):
+    if not await _claim_or_resume_completion(
+        namespace, name, body, key=key, parent_uid=parent_uid
+    ):
         return
 
-    logger.info(
-        f"Benchmark completion signal received for {namespace}/{name}, fetching results"
-    )
-
     sb = StatusBuilder(patch, status)
-    await handle_completion(
-        body,
-        namespace,
-        jobset_name,
-        job_id,
-        status=status,
-        sb=sb,
-        expected_parent_uid=parent_uid,
-    )
+    try:
+        await handle_completion(
+            body,
+            namespace,
+            jobset_name,
+            job_id,
+            status=status,
+            sb=sb,
+            expected_parent_uid=parent_uid,
+        )
+    except TransientCompletionFetchError:
+        mark_completion_retry_pending(key)
+        raise
     # observedGeneration is a success-path-only stamp: stamp ONLY when
     # handle_completion finalized the CR as COMPLETED. Absence of a phase
     # (handle_completion short-circuited on a mid-completion cancellation
