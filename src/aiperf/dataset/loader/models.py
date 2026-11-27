@@ -8,6 +8,7 @@ from pydantic import ConfigDict, Field, model_validator
 from aiperf.common.enums import AssistantResponseMode
 from aiperf.common.finite import FiniteFloat
 from aiperf.common.models import AIPerfBaseModel, Audio, Image, Text, Video
+from aiperf.common.models.dataset_models import ChatToolMetadata
 from aiperf.plugin.enums import CustomDatasetType
 
 if TYPE_CHECKING:
@@ -105,6 +106,15 @@ class SingleTurn(AIPerfBaseModel):
         description="Amount of milliseconds to wait before sending the turn. Supports floating point, but scheduling accuracy is at the millisecond level.",
     )
     role: str | None = Field(default=None, description="Role of the turn.")
+    tool_calls: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="OpenAI-compatible tool calls authored by an assistant. Chat endpoint only.",
+    )
+    tool_call_id: str | None = Field(
+        default=None,
+        min_length=1,
+        description="ID of the assistant tool call answered by this tool message. Chat endpoint only.",
+    )
     session_id: str | None = Field(
         default=None,
         description="Session ID for causal ordering. Entries sharing a session_id "
@@ -126,6 +136,15 @@ class SingleTurn(AIPerfBaseModel):
         default=None,
         description="Per-turn extra fields shallow-merged into the request body at dispatch time. Keys override formatter defaults on collision.",
     )
+
+    @property
+    def chat_tool_metadata(self) -> ChatToolMetadata | None:
+        """Keep chat-only fields together through internal turn serialization."""
+        if self.tool_calls is None and self.tool_call_id is None:
+            return None
+        return ChatToolMetadata(
+            tool_calls=self.tool_calls, tool_call_id=self.tool_call_id
+        )
 
     @model_validator(mode="after")
     def validate_mutually_exclusive_fields(self) -> "SingleTurn":
@@ -168,7 +187,15 @@ class SingleTurn(AIPerfBaseModel):
     @model_validator(mode="after")
     def validate_at_least_one_modality(self) -> "SingleTurn":
         """Ensure at least one modality is provided"""
-        if not _has_any_modality(self):
+        if self.tool_calls is not None and self.role != "assistant":
+            raise ValueError("tool_calls requires role 'assistant'")
+        if self.tool_call_id is not None and self.role != "tool":
+            raise ValueError("tool_call_id requires role 'tool'")
+        if not (
+            _has_any_modality(self)
+            or self.tool_calls
+            or (self.tool_call_id is not None and self.text == "")
+        ):
             raise ValueError("At least one modality must be provided")
         return self
 

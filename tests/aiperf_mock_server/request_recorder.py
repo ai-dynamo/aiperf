@@ -320,7 +320,7 @@ def _encode_chat_prompt_ids(
     # literal instead of the text, inflating the ISL measurement.
     raw_messages = [_message_to_dict(msg) for msg in request.messages]
     messages = [
-        {**m, "content": _content_to_text(m["content"])}
+        {**m, "content": _content_to_text(m.get("content"))}
         if not isinstance(m.get("content"), str)
         else m
         for m in raw_messages
@@ -495,10 +495,19 @@ def _message_to_dict(message: Any) -> dict[str, Any]:
 def _render_chat_template_fallback(
     messages: list[dict[str, Any]], add_generation_prompt: bool
 ) -> str:
+    """Render role, content, and tool fields when no model chat template is usable."""
     rendered: list[str] = []
     for message in messages:
         role = str(message.get("role", "user"))
         content = _content_to_text(message.get("content", ""))
+        tool_fields = {
+            key: message[key]
+            for key in ("tool_calls", "tool_call_id")
+            if message.get(key) is not None
+        }
+        if tool_fields:
+            metadata = orjson.dumps(tool_fields, option=orjson.OPT_SORT_KEYS).decode()
+            content = f"{content}\n{metadata}" if content else metadata
         rendered.append(f"<|im_start|>{role}\n{content}<|im_end|>")
     if add_generation_prompt:
         rendered.append("<|im_start|>assistant\n")
