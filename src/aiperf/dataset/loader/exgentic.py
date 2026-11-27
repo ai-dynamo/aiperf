@@ -8,7 +8,7 @@ from collections import Counter
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from math import isfinite
-from typing import Any
+from typing import Any, ClassVar
 
 import orjson
 from pydantic import ValidationError
@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Conversation, Turn
+from aiperf.dataset.loader._delay_cap import DelayCapTracker
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
 from aiperf.dataset.loader.exgentic_filters import (
     V1_UNSUPPORTED_FILTER_PAIRS,
@@ -24,6 +25,7 @@ from aiperf.dataset.loader.exgentic_filters import (
     ExgenticSourceModel,
     available_filter_values,
 )
+from aiperf.dataset.loader.h_cua_perf_processing import reject_ignore_trace_delays
 from aiperf.plugin.enums import PhaseType
 
 
@@ -230,6 +232,7 @@ def _is_replayable_span(span: dict[str, Any], attributes: dict[str, Any]) -> boo
 class ExgenticDatasetLoader(BaseHFDatasetLoader):
     """Replay complete Exgentic LLM request snapshots as AIPerf sessions."""
 
+    tag: ClassVar[str] = "Exgentic"
     hf_revision = "70036b93a04e61b0ea2706a68b962f4f26774587"
     unsupported_filter_pairs = V1_UNSUPPORTED_FILTER_PAIRS
     supports_benchmark_filter = False
@@ -283,6 +286,17 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
                 f"{self.filters.source_model.value!r}; no harness supports it"
             )
         super().__init__(**kwargs)
+        reject_ignore_trace_delays(self.tag, self.run)
+        if getattr(self.run.cfg.get_default_dataset(), "use_think_time_only", False):
+            raise DatasetLoaderError(
+                f"{self.tag}: --use-think-time-only applies to the Weka loaders only; "
+                "Exgentic replay keeps the recorded inter-turn waits"
+            )
+        self._delay_cap_tracker = DelayCapTracker(
+            cap_seconds=getattr(
+                self.run.cfg.get_default_dataset(), "inter_turn_delay_cap_seconds", None
+            )
+        )
         self._fixed_schedule = any(
             phase.type == PhaseType.FIXED_SCHEDULE
             for phase in self.run.cfg.get_profiling_phases()
@@ -368,15 +382,16 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
             ) from error
         return start_ms, span_index, end_ms, turn
 
-    @staticmethod
     def _build_turns(
-        spans: list[tuple[float, int, float, Turn]], stats: Counter[str]
+        self, spans: list[tuple[float, int, float, Turn]], stats: Counter[str]
     ) -> list[Turn]:
         previous_end_ms: float | None = None
         turns = []
         for start_ms, _, end_ms, turn in spans:
             if previous_end_ms is not None:
-                turn.delay = max(0.0, start_ms - previous_end_ms)
+                turn.delay = self._delay_cap_tracker.clamp(
+                    max(0.0, start_ms - previous_end_ms)
+                )
                 if start_ms < previous_end_ms:
                     stats["overlap"] += 1
             turns.append(turn)
@@ -457,6 +472,7 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
 
     def _convert_rows(self, rows: Iterable[dict[str, Any]]) -> list[Conversation]:
         conversations: list[Conversation] = []
+        self._delay_cap_tracker.reset()
         combinations: set[tuple[str, str]] = set()
         seen_sessions: set[str] = set()
         stats: Counter[str] = Counter()
@@ -492,4 +508,5 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
             f"non_llm={stats['non_llm']}, zero_token={stats['zero_token']}; "
             f"overlapping_calls={stats['overlap']}"
         )
+        self._delay_cap_tracker.log_summary(logger_name=__name__)
         return conversations
