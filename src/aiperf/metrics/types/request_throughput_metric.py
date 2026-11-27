@@ -13,7 +13,7 @@ class RequestThroughputMetric(BaseDerivedMetric[float]):
     Post Processor for calculating Request throughput metrics from records.
 
     Formula:
-        Request Throughput = Valid Request Count / Benchmark Duration (seconds)
+        Request Throughput = Valid Request Count / Observation Duration (seconds)
     """
 
     tag = "request_throughput"

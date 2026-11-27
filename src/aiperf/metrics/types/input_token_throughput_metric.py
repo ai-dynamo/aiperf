@@ -20,7 +20,7 @@ class InputTokenThroughputMetric(BaseDerivedMetric[float]):
     way to see prefill saturation.
 
     Formula:
-        Input Token Throughput = Total Input Tokens / Benchmark Duration (seconds)
+        Input Token Throughput = Total Input Tokens / Observation Duration (seconds)
     """
 
     tag = "input_token_throughput"

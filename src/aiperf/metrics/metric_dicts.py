@@ -208,19 +208,16 @@ class MetricResultsDict(BaseMetricDict[MetricDictValueTypeT]):
     def __init__(self, *args: ..., **kwargs: ...) -> None:
         super().__init__(*args, **kwargs)
         self.window_start_ns: int | None = None
-        """Inclusive start of the analysis window (ns since epoch); ``None``
-        means the dict spans the full run."""
+        """Inclusive start of the analysis window (ns since epoch), if set."""
         self.window_end_ns: int | None = None
-        """Exclusive end of the analysis window (ns since epoch); ``None``
-        means the dict spans the full run."""
+        """Exclusive end of the analysis window (ns since epoch), if set."""
 
     def observation_duration(self, target_unit: MetricUnitT) -> float:
         """Return the observation duration converted to *target_unit*.
 
-        If explicit window bounds are set (``window_start_ns`` / ``window_end_ns``
-        — populated for timeslice and analyzer-windowed scalar dicts), uses
-        ``(window_end_ns - window_start_ns)``. Otherwise falls back to
-        ``BenchmarkDurationMetric``.
+        If both explicit window bounds are set, uses their difference. Bounds
+        may be provided for phase exports, timeslices, and analyzer windows.
+        Otherwise falls back to ``BenchmarkDurationMetric``.
 
         Raises ``NoMetricValue`` when the resolved duration is zero.
         """

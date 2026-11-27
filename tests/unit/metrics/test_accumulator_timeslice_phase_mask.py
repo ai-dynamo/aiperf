@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.enums import CreditPhase
 from aiperf.common.messages import MetricRecordsData
@@ -41,6 +43,28 @@ def _record(index: int, second: int, phase: CreditPhase) -> MetricRecordsData:
 
 def test_last_slice_ends_with_the_exported_phase() -> None:
     asyncio.run(_run_last_slice_ends_with_the_exported_phase())
+
+
+@pytest.mark.asyncio
+async def test_phase_export_throughput_uses_phase_window() -> None:
+    acc = MetricsAccumulator(make_benchmark_run())
+    for index, second in enumerate((2, 4)):
+        await acc.process_record(_record(index, second, CreditPhase.PROFILING))
+
+    summary = await acc.export_results(
+        ExportContext(
+            start_ns=T0 + NS_PER_S,
+            end_ns=T0 + 6 * NS_PER_S,
+            phase=CreditPhase.PROFILING,
+        )
+    )
+
+    assert summary.results["benchmark_duration"].avg == 3.0
+    assert summary.results["request_count"].avg == 2.0
+    assert summary.results["request_throughput"].avg == pytest.approx(0.4)
+    assert summary.results["input_token_throughput"].avg == 20.0
+    assert summary.results["output_token_throughput"].avg == 40.0
+    assert summary.results["total_token_throughput"].avg == 60.0
 
 
 async def _run_last_slice_ends_with_the_exported_phase() -> None:
