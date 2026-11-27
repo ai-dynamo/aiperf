@@ -1,10 +1,8 @@
 # Docs End-to-End Harness
 
-This harness executes the commands printed in the docs against a real
-inference server, so a tutorial that no longer works fails CI instead of
-failing a user. It is driven by HTML comment tags in the markdown itself: an
-untagged command is never run, which is what `tools/check_docs_e2e_tags.py`
-guards against on newly added docs.
+This harness runs documented benchmark commands against real inference
+servers. HTML comment tags select the commands. The
+`tools/check_docs_e2e_tags.py` gate finds new benchmark examples without tags.
 
 > The suite only ever runs against a real server on the GPU runner. Never point
 > it at the in-repo mock server -- a green run would then prove nothing about
@@ -27,7 +25,7 @@ slash.
 
 | Kind | Purpose |
 |---|---|
-| `setup` | Starts the inference server. Runs once per server group, before anything else. |
+| `setup` | Supplies the image, arguments, dependencies, and environment for a native vLLM server. |
 | `health-check` | Blocks until the server answers. Gates that group's run commands. |
 | `aiperf-run` | A command to execute. A group may have many. |
 
@@ -69,6 +67,14 @@ files that depend on each other would still break, and nothing detects it.
 
 ## Running it
 
+Use a Linux environment with a GPU, Bash, curl, FFmpeg, and vLLM installed.
+Install AIPerf in a separate Python environment with `uv`.
+If the environments use different interpreters, set
+`AIPERF_DOCS_VLLM_PYTHON` to the absolute path of the vLLM interpreter.
+Activate the AIPerf environment before running the harness.
+The audio dependency overlay requires a system installation of vLLM, as
+provided by the CI container.
+
 ```bash
 cd tests/ci/test_docs_end_to_end
 python3 main.py --dry-run                      # list what would run, start nothing
@@ -79,6 +85,37 @@ python3 main.py --server vllm-default-openai --shard-index 0 --shard-total 4
 
 `setup_test.sh` is the CI entry point and forwards `SERVER_NAME`,
 `SHARD_INDEX`, and `SHARD_TOTAL` to these flags.
+
+CI uses `ai-dynamo-gpu-1-amd64-v1` in the `ai-dynamo-gpu` organization runner
+group. Kubernetes launches a vLLM job container with one GPU.
+The workflow installs AIPerf from `uv.lock` in an isolated Python environment,
+with the image's `botorch` and `aws` extras and the `test` extra.
+The harness starts vLLM directly and runs benchmark commands through Bash.
+It requires no Docker daemon or privileged container.
+
+For nightly builds of older commits, CI uses the harness from the workflow
+revision. Application code, docs, fixtures, and locked dependencies come from
+the selected source commit.
+
+The harness translates supported Docker setup wrappers into native execution.
+It preserves server arguments and explicit environment assignments.
+Inline Dockerfiles support `FROM` and `RUN pip install` instructions.
+Their dependencies use a separate environment that inherits the installed
+server packages. Version constraints preserve the compiled GPU stack while
+allowing Python dependencies to satisfy the documented extras.
+The dependency resolver checks the compiled packages but omits them from
+installation so the overlay reuses the image's copies.
+Unsupported setup instructions fail the test.
+If `AIPERF_DOCS_SERVER_IMAGE` is set, the documented base image must match it.
+
+Each server uses one working directory so fixture files survive between
+commands. The harness maps `/fixtures/` references to a link to
+`tests/fixtures/`. It stops its own process groups, including groups created by
+health checks, after completion, failure, timeout, or cancellation.
+It then removes that server's working directory.
+
+The suite tests native server startup, documented health checks, and benchmark
+commands. It does not build Docker images or test Docker runtime flags.
 
 ## When CI runs it
 
