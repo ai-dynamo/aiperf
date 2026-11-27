@@ -40,11 +40,48 @@ from aiperf.common.models import Conversation
 from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
-from aiperf.dataset.loader.weka_trace_models import WekaTrace
+from aiperf.dataset.loader.weka_trace_models import (
+    WekaNormalRequest,
+    WekaStreamingRequest,
+    WekaSubagentEntry,
+    WekaTrace,
+)
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+
+
+def _strip_hf_null_padding(row: dict[str, Any]) -> dict[str, Any]:
+    """Remove Arrow's absent union fields without accepting non-null extras."""
+    models = {
+        "n": WekaNormalRequest,
+        "s": WekaStreamingRequest,
+        "subagent": WekaSubagentEntry,
+    }
+
+    def clean(value: Any, model: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        allowed = set(model.model_fields)
+        allowed.update(
+            field.alias for field in model.model_fields.values() if field.alias
+        )
+        result = {
+            key: item
+            for key, item in value.items()
+            if key in allowed or item is not None
+        }
+        if isinstance(result.get("requests"), list):
+            result["requests"] = [
+                clean(item, models[item["type"]])
+                if isinstance(item, dict) and item.get("type") in models
+                else item
+                for item in result["requests"]
+            ]
+        return result
+
+    return clean(row, WekaTrace)
 
 
 class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
@@ -120,7 +157,7 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
         source_by_trace: dict[str, str] = {}
         for i, row in enumerate(ds):
             try:
-                trace = WekaTrace.model_validate(row)
+                trace = WekaTrace.model_validate(_strip_hf_null_padding(row))
             except ValidationError as e:
                 raise DatasetLoaderError(
                     f"Row {i} of {self.hf_dataset_name} failed WekaTrace "
