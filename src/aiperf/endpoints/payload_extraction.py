@@ -330,15 +330,33 @@ def _append_string_or_list(
 
 
 def _append_query_passages(payload: dict[str, Any], result: ExtractedPayload) -> bool:
-    """Rankings shape: ``query`` + ``passages`` (strings or {"text": ...} dicts)."""
+    """Rankings query and candidates in NIM, Cohere, and HuggingFace TEI shapes."""
     query = payload.get("query")
-    passages = payload.get("passages")
-    if not (isinstance(query, str) and isinstance(passages, list)):
+    if isinstance(query, dict):
+        query = query.get("text")
+    passage_key = next(
+        (
+            key
+            for key in ("passages", "documents", "texts")
+            if isinstance(payload.get(key), list)
+        ),
+        None,
+    )
+    if not isinstance(query, str) or passage_key is None:
         return False
+    passages = payload[passage_key]
+    rank_fields = payload.get("rank_fields") if passage_key == "documents" else None
+    fields = rank_fields if isinstance(rank_fields, list) else ["text"]
     result.texts.append(query)
     for p in passages:
         if isinstance(p, str):
             result.texts.append(p)
-        elif isinstance(p, dict) and isinstance(p.get("text"), str):
-            result.texts.append(p["text"])
+        elif isinstance(p, dict):
+            values = [
+                p[field]
+                for field in fields
+                if isinstance(field, str) and isinstance(p.get(field), str)
+            ]
+            if values:
+                result.texts.append(" ".join(values))
     return True
