@@ -35,6 +35,10 @@ _MISSING = (
     "No speculative-decoding acceptance record on this request (spec decode off, "
     "the request had no verify steps, or the engine reported no stats)."
 )
+_NO_STEP_DATA = (
+    "The engine reported no per-step acceptance data for this request "
+    "(aggregate-only, e.g. llama.cpp)."
+)
 
 
 class BaseSpecDecodeRecordMetric(
@@ -78,7 +82,10 @@ class BaseSpecDecodeRecordMetric(
                 f"{type(self).__name__} must set spec_decode_field or override "
                 "_parse_record"
             )
-        return getattr(self._record(record), self.spec_decode_field)
+        value = getattr(self._record(record), self.spec_decode_field)
+        if value is None:
+            raise NoMetricValue(_NO_STEP_DATA)
+        return value
 
 
 class SpecDecodeAcceptanceLengthMetric(BaseSpecDecodeRecordMetric[float]):
@@ -156,6 +163,8 @@ class SpecDecodeAcceptedPerVerifiedMetric(BaseSpecDecodeRecordMetric[float]):
         record_metrics: MetricRecordDict,
     ) -> float:
         spec = self._record(record)
+        if spec.num_spec_steps is None:
+            raise NoMetricValue(_NO_STEP_DATA)
         denominator = spec.num_draft_tokens + spec.num_spec_steps
         if denominator == 0:
             raise NoMetricValue(
@@ -244,6 +253,33 @@ class SpecDecodeDraftTokensMetric(BaseSpecDecodeRecordMetric[int]):
     spec_decode_field = "num_draft_tokens"
 
 
+class SpecDecodeSteppedAcceptedDraftTokensMetric(BaseSpecDecodeRecordMetric[int]):
+    """Per-request accepted draft tokens, reported only for records that also
+    carry a step count. Feeds the token-weighted acceptance length so its
+    numerator and its step denominator cover the same requests. Internal.
+    """
+
+    tag = "spec_decode_stepped_accepted_draft_tokens"
+    header = "Stepped Accepted Draft Tokens"
+    short_header = "Stepped Accepted Draft"
+    short_header_hide_unit = True
+    unit = GenericMetricUnit.TOKENS
+    flags = MetricFlags.INTERNAL
+    console_group = MetricConsoleGroup.NONE
+    display_order = 5065
+    required_metrics = None
+
+    def _parse_record(
+        self,
+        record: ParsedResponseRecord,
+        record_metrics: MetricRecordDict,
+    ) -> int:
+        spec = self._record(record)
+        if spec.num_spec_steps is None:
+            raise NoMetricValue(_NO_STEP_DATA)
+        return spec.num_accepted_draft_tokens
+
+
 class TotalSpecDecodeStepsMetric(DerivedSumMetric[int, SpecDecodeStepsMetric]):
     """Total speculative verification steps across all requests
     (``Sum(num_spec_steps)``). Equals the sum of the pooled acceptance
@@ -284,9 +320,27 @@ class TotalDraftTokensMetric(DerivedSumMetric[int, SpecDecodeDraftTokensMetric])
     display_order = 5160
 
 
+class TotalSteppedAcceptedDraftTokensMetric(
+    DerivedSumMetric[int, SpecDecodeSteppedAcceptedDraftTokensMetric]
+):
+    """Total accepted draft tokens from records that report a step count
+    (``Sum(spec_decode_stepped_accepted_draft_tokens)``). Internal."""
+
+    tag = "total_stepped_accepted_draft_tokens"
+    header = "Total Stepped Accepted Draft Tokens"
+    short_header = "Total Stepped Accepted Draft"
+    short_header_hide_unit = True
+    flags = MetricFlags.INTERNAL
+    console_group = MetricConsoleGroup.NONE
+    display_order = 5170
+
+
 class SpecDecodeTokenWeightedAcceptanceLengthMetric(BaseDerivedMetric[float]):
     """Run-level token-weighted mean acceptance length: ``1 + Sum(accepted) /
-    Sum(steps)``.
+    Sum(steps)``, where the accepted total covers only records that report a
+    step count. Step-less records (aggregate-only engines such as llama.cpp)
+    add accepted tokens but no steps, so including them would inflate the
+    length.
 
     Reported alongside the per-request-mean ``spec_decode_acceptance_length``:
     this weights every verify step equally while the per-request mean weights
@@ -303,7 +357,7 @@ class SpecDecodeTokenWeightedAcceptanceLengthMetric(BaseDerivedMetric[float]):
     console_group = MetricConsoleGroup.SPEC_DECODE
     display_order = 5010
     required_metrics = {
-        TotalAcceptedDraftTokensMetric.tag,
+        TotalSteppedAcceptedDraftTokensMetric.tag,
         TotalSpecDecodeStepsMetric.tag,
     }
 
@@ -313,7 +367,7 @@ class SpecDecodeTokenWeightedAcceptanceLengthMetric(BaseDerivedMetric[float]):
             raise NoMetricValue(
                 "Token-weighted acceptance length is undefined with zero verify steps."
             )
-        accepted = metric_results.get_or_raise(TotalAcceptedDraftTokensMetric)
+        accepted = metric_results.get_or_raise(TotalSteppedAcceptedDraftTokensMetric)
         return 1.0 + accepted / steps
 
 

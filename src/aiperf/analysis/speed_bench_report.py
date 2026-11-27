@@ -24,8 +24,8 @@ Acceptance numbers come from one of three sources, tried in this order
    scope. The portable path: the only one that works for engines with no
    per-request acceptance reporting.
 
-``records``, ``summary``, and the **counter** branch of ``server`` (vLLM's
-``vllm:spec_decode_*`` totals) all compute the same token-weighted quantities,
+``records``, ``summary``, and the **counter** branch of ``server`` (vLLM's and
+llama.cpp's ``spec_decode_*`` totals) all compute the same token-weighted quantities,
 so their columns are directly comparable: acceptance length is
 ``1 + accepted / steps`` and acceptance rate is ``accepted / drafted``, both
 summed over the run rather than averaged per request.
@@ -97,6 +97,10 @@ ACCEPT_LENGTH_METRICS = [
     "vllm:spec_decode_mean_accepted_length",
     "trtllm:spec_accept_length",
 ]
+
+# Prometheus prefixes whose ``spec_decode_*`` counters yield acceptance from
+# totals rather than gauges. llama.cpp publishes the same unsuffixed names.
+COUNTER_PREFIXES = ("vllm:", "llamacpp:")
 
 ACCEPT_RATE_METRICS = [
     "sglang:spec_accept_rate",
@@ -237,15 +241,16 @@ def extract_accept_length(server_metrics: dict) -> float | None:
         if val is not None:
             return val
 
-    # vLLM: compute from counters (accepted_tokens / num_drafts)
+    # vLLM and llama.cpp: compute from counters (accepted_tokens / num_drafts)
     # Each draft step produces 1 verification token + accepted draft tokens,
     # so acceptance length = (accepted / drafts) + 1
-    accepted = _get_metric_stat(
-        metrics, "vllm:spec_decode_num_accepted_tokens", "total"
-    )
-    drafts = _get_metric_stat(metrics, "vllm:spec_decode_num_drafts", "total")
-    if accepted is not None and drafts and drafts > 0:
-        return (accepted / drafts) + 1.0
+    for prefix in COUNTER_PREFIXES:
+        accepted = _get_metric_stat(
+            metrics, f"{prefix}spec_decode_num_accepted_tokens", "total"
+        )
+        drafts = _get_metric_stat(metrics, f"{prefix}spec_decode_num_drafts", "total")
+        if accepted is not None and drafts and drafts > 0:
+            return (accepted / drafts) + 1.0
 
     # Fuzzy fallback for engines we don't know by name yet. Require all three
     # of "spec", "accept", "length" in the metric name so we don't pick up
@@ -272,15 +277,16 @@ def extract_accept_rate(server_metrics: dict) -> float | None:
         if val is not None:
             return val
 
-    # vLLM: compute from counters (accepted_tokens / draft_tokens)
-    accepted = _get_metric_stat(
-        metrics, "vllm:spec_decode_num_accepted_tokens", "total"
-    )
-    draft_tokens = _get_metric_stat(
-        metrics, "vllm:spec_decode_num_draft_tokens", "total"
-    )
-    if accepted is not None and draft_tokens and draft_tokens > 0:
-        return accepted / draft_tokens
+    # vLLM and llama.cpp: compute from counters (accepted_tokens / draft_tokens)
+    for prefix in COUNTER_PREFIXES:
+        accepted = _get_metric_stat(
+            metrics, f"{prefix}spec_decode_num_accepted_tokens", "total"
+        )
+        draft_tokens = _get_metric_stat(
+            metrics, f"{prefix}spec_decode_num_draft_tokens", "total"
+        )
+        if accepted is not None and draft_tokens and draft_tokens > 0:
+            return accepted / draft_tokens
 
     return None
 
@@ -327,6 +333,11 @@ class AcceptanceTotals:
     steps: int = 0
     """Speculative verification steps."""
 
+    accepted_with_steps: int = 0
+    """Accepted draft tokens from records that reported a step count, so the
+    acceptance-length numerator stays paired with ``steps`` when a category
+    mixes step-reporting and aggregate-only records."""
+
     def add(self, spec: dict) -> None:
         """Fold one request's acceptance record into the totals.
 
@@ -338,7 +349,12 @@ class AcceptanceTotals:
         """
         accepted = spec["num_accepted_draft_tokens"]
         drafted = spec["num_draft_tokens"]
-        steps = spec["num_spec_steps"]
+        steps = spec.get("num_spec_steps")
+        # Aggregate-only engines (llama.cpp) report no step count. Their draft
+        # counters still count toward acceptance rate but not acceptance length.
+        has_steps = steps is not None
+        if not has_steps:
+            steps = 0
         if not all(type(count) is int for count in (accepted, drafted, steps)):
             raise TypeError(
                 "acceptance counters must be integers, got "
@@ -355,12 +371,14 @@ class AcceptanceTotals:
         self.accepted += accepted
         self.drafted += drafted
         self.steps += steps
+        if has_steps:
+            self.accepted_with_steps += accepted
 
     def value(self, metric_type: AcceptanceMetric) -> float | None:
         """Token-weighted acceptance length or rate; None when undefined."""
         if metric_type == "accept_rate":
             return self.accepted / self.drafted if self.drafted else None
-        return 1.0 + self.accepted / self.steps if self.steps else None
+        return 1.0 + self.accepted_with_steps / self.steps if self.steps else None
 
 
 def iter_records(run_dir: Path) -> Iterator[dict]:
