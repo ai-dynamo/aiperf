@@ -206,35 +206,19 @@ Each turn is a flat object validated against a strict schema (`DagTurn` in `src/
 
 ### Deterministic synthetic multimodal turns (`media_segments` & `prompt_spans`)
 
-To benchmark multimodal agentic DAG workflows (image + video) without embedding gigabytes of raw base64 media or confidential text inside `.dag.jsonl` traces, a turn can declare content-addressed `media_segments` alongside either zero-leakage `prompt_spans` (omitting `messages`) or inline `{"type": "media_ref"}` placeholders inside `messages`:
+To benchmark multimodal DAG workflows (image + video) without embedding raw base64 media or real prompt text in the trace, a turn can declare `media_segments` and either `prompt_spans` (omitting `messages`) or `{"type": "media_ref"}` placeholders inside authored `messages`:
 
 ```jsonc
 {
   "media_segments": [
-    {
-      "media_hash": "img_ref_01",
-      "kind": "image",
-      "width": 1024,
-      "height": 576,
-      "vis_tokens": 576,
-      "framing_tokens": 2
-    },
-    {
-      "media_hash": "vid_cand_a",
-      "kind": "video",
-      "width": 640,
-      "height": 384,
-      "fps": 24.0,
-      "num_frames": 16,
-      "vis_tokens": 1920,
-      "framing_tokens": 64
-    }
+    { "media_hash": "img_ref_01", "kind": "image", "width": 1024, "height": 576 },
+    { "media_hash": "vid_cand_a", "kind": "video", "width": 640, "height": 384, "fps": 24.0, "num_frames": 16 }
   ],
   "prompt_spans": [
     { "kind": "text",  "span_id": "sys_rubric_v1", "tokens": 128, "role": "system" },
-    { "kind": "text",  "span_id": "turn0_intro",   "tokens": 64,  "role": "user" },
-    { "kind": "media", "span_id": "img_ref_01",    "tokens": 578, "media_index": 0, "role": "user" },
-    { "kind": "media", "span_id": "vid_cand_a",    "tokens": 1984,"media_index": 1, "role": "user" }
+    { "kind": "text",  "span_id": "turn0_intro",   "tokens": 64 },
+    { "kind": "media", "span_id": "img_ref_01",    "media_index": 0, "tokens": 578 },
+    { "kind": "media", "span_id": "vid_cand_a",    "media_index": 1 }
   ],
   "max_tokens": 128,
   "extra": { "mm_processor_kwargs": { "do_sample_frames": false } },
@@ -244,10 +228,14 @@ To benchmark multimodal agentic DAG workflows (image + video) without embedding 
 
 Key properties:
 
-- **Untimed pre-staging and `media_hash` deduplication.** During dataset configuration (before warmup or timed profiling begins), `DagJsonlLoader` collects every `DagMediaSegment` across all conversations and branches, deduplicates by `(kind, media_hash, width, height, fps, num_frames)`, generates and decode-verifies deterministic RGB PNGs and `yuv420p` MP4 clips once, and freezes the materializer so zero media encoding happens during timed replay.
-- **Cross-turn and cross-branch cache locality.** Keeping the full `(kind, media_hash, width, height, fps, num_frames)` media identity stable across turns, `FORK` children, or `SPAWN` sub-agents emits byte-identical media URLs/URIs (and optional `uuid` tags for multimodal embedding caches and `--cache-bust-media-uuids`); varying any geometry or frame-rate field produces a distinct media payload and URL. Shared `span_id` text spans likewise render byte-identical prefixes.
-- **Hybrid `media_ref` authoring.** Authors who prefer explicit `messages` text can keep `messages` and reference a declared segment via `{"type": "media_ref", "media_hash": "img_ref_01"}` (or `"media_index": 0`).
-- **Visual-token geometry helper.** `aiperf.dataset.generator.multimodal_vistok` provides `compute_image_visual_tokens` and `compute_video_visual_tokens` to calibrate `(width, height, num_frames)` to exact ViT patch/merge visual token budgets (e.g. `qwen3_vl` and `qwen2_5_vl`).
+- **Load-time synthesis.** `DagJsonlLoader` renders these turns while the dataset is configured, before warmup or profiling starts. Images become deterministic PNGs; videos become deterministic H.264 `yuv420p` MP4s (falling back to `mpeg4`), encoded by streaming frames into `ffmpeg`, which must be installed. Each unique `(kind, media_hash, width, height, fps, num_frames)` is encoded once and decode-verified for geometry, frame rate and frame count.
+- **Exact text lengths.** A `text` span synthesizes neutral filler words seeded by `span_id`, calibrated with the run's tokenizer to exactly `tokens` tokens. Spans with the same `role` merge into one message. `in_text_tokens` (without `prompt_spans`) is shorthand for one user text span followed by every segment in order.
+- **Media `tokens` is informational.** On a `media` span, `tokens` is optional and ignored by synthesis (useful for recording the trace's visual-token count); only the segment's geometry decides what is sent. Media spans and `media_ref` parts must be in `user` messages.
+- **Cross-turn and cross-branch cache locality.** The same segment identity in different turns, `FORK` children or `SPAWN` sub-agents sends byte-identical media; changing any geometry or frame-rate field produces a different payload. Shared `span_id` text spans likewise render identical text.
+- **Media uuids and `--cache-bust-media-uuids`.** A segment's explicit `uuid` is always sent on its content part. With `--cache-bust-media-uuids`, segments without one get a uuid derived from their identity, so the worker can suffix it per trajectory like any other media uuid.
+- **Hybrid `media_ref` authoring.** Authored `messages` can reference a declared segment with `{"type": "media_ref", "media_hash": "img_ref_01"}` (or `"media_index": 0`). A hash that matches distinct segments must use `media_index`.
+
+**Inline payload size.** Media is sent as inline `data:` URIs, repeated in every turn that references it (and again in later turns' accumulated history). Video URIs grow quickly: a 1280×720, 64-frame clip renders to a roughly 5–8.5 MB `data:` URI, depending on the ffmpeg build. AIPerf logs a warning at load time when one segment's URI exceeds 4 MiB or all referenced URIs together exceed 32 MiB; reduce `width`, `height` or `num_frames` if requests get too large.
 
 ### FORK mode (prefix-cache testing)
 

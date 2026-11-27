@@ -512,7 +512,31 @@ class TestExplicitCustomDatasetType:
 
         composer.create_dataset()
         assert isinstance(composer.loader, DagJsonlLoader)
-        assert composer.loader._tokenizer is mock_tokenizer
+        assert composer.loader._materializer.emit_media_uuid is False
+
+    @pytest.mark.parametrize("media_uuids", [True, False])
+    def test_dag_jsonl_forwards_cache_bust_media_uuids(
+        self, tmp_path: Path, mock_tokenizer: Mock, media_uuids: bool
+    ) -> None:
+        jsonl = tmp_path / "mm.dag.jsonl"
+        jsonl.write_text(
+            '{"session_id": "s", "turns": [{"media_segments": '
+            '[{"media_hash": "img", "kind": "image", "width": 8, "height": 8}]}]}\n'
+        )
+        cli_config = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type="chat",
+            input_file=str(jsonl),
+            cache_bust="system_suffix",
+            cache_bust_media_uuids=media_uuids,
+        )
+        composer = CustomDatasetComposer(
+            run=make_run(cli_config), tokenizer=mock_tokenizer
+        )
+        (conv,) = composer.create_dataset()
+        assert composer.loader._materializer.emit_media_uuid is media_uuids
+        part = conv.turns[0].raw_messages[0]["content"][0]
+        assert ("uuid" in part) is media_uuids
 
     def test_dag_jsonl_forwards_tokenizer_for_structural_span_calibration(
         self, tmp_path: Path, mock_tokenizer: Mock

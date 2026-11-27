@@ -324,6 +324,21 @@ class CustomDatasetComposer(BaseDatasetComposer):
             prefix_prompts=None,
         )
 
+    def _optional_loader_kwargs(self, loader_class: Any) -> dict[str, Any]:
+        """Kwargs forwarded only to loaders that explicitly declare them."""
+        if not isinstance(loader_class, type):
+            return {}
+        kwargs: dict[str, Any] = {}
+        if self.tokenizer is not None and self._loader_accepts_kwarg(
+            loader_class, "tokenizer"
+        ):
+            kwargs["tokenizer"] = self.tokenizer
+        # Synthesized DAG media carries no uuid unless asked; the worker's
+        # --cache-bust-media-uuids suffixing only rewrites existing uuids.
+        if self._loader_accepts_kwarg(loader_class, "emit_media_uuid"):
+            kwargs["emit_media_uuid"] = self.run.cfg.is_cache_bust_media_uuids_enabled()
+        return kwargs
+
     def _create_loader_instance(self, dataset_type: CustomDatasetType) -> None:
         """Initializes the dataset loader based on the custom dataset type.
 
@@ -368,12 +383,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
                 )
             kwargs["multi_turn"] = loader_metadata.multi_turn
 
-        if (
-            self.tokenizer is not None
-            and isinstance(LoaderClass, type)
-            and self._loader_accepts_kwarg(LoaderClass, "tokenizer")
-        ):
-            kwargs["tokenizer"] = self.tokenizer
+        kwargs.update(self._optional_loader_kwargs(LoaderClass))
 
         if self._inline_records is not None:
             self.loader = LoaderClass(

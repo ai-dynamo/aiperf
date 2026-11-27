@@ -3,11 +3,8 @@
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
-import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 import orjson
 from pydantic import ValidationError
@@ -37,11 +34,7 @@ from aiperf.dataset.loader._dag_jsonl_helpers import (
 )
 from aiperf.dataset.loader._delay_cap import DelayCapTracker
 from aiperf.dataset.loader.base_loader import BaseFileLoader, LoaderProbeData
-from aiperf.dataset.loader.dag_jsonl_media import (
-    DagMultimodalMaterializer,
-    MediaStagingSummary,
-    prepare_materializer_for_conversations,
-)
+from aiperf.dataset.loader.dag_jsonl_media import DagMultimodalMaterializer
 from aiperf.dataset.loader.dag_jsonl_models import DagConversation, DagFork, DagTurn
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
@@ -50,38 +43,23 @@ if TYPE_CHECKING:
 
 __all__ = ["DagJsonlLoader", "DagLoadError"]
 
-
+# ``MultiTurn`` turn keys; a file using any of them belongs to that loader.
 _MULTI_TURN_MODALITY_KEYS: frozenset[str] = frozenset(
-    {
-        "text",
-        "texts",
-        "image",
-        "images",
-        "image_uuids",
-        "audio",
-        "audios",
-        "video",
-        "videos",
-    }
-)
+    {"text", "texts", "image", "images", "image_uuids", "audio", "audios", "video", "videos"}
+)  # fmt: skip
 
 
-def _is_dag_turn_probe(turn_obj: dict[str, Any]) -> bool:
-    """Return True when ``turn_obj`` carries any DAG-specific turn indicator."""
-    if not _MULTI_TURN_MODALITY_KEYS.isdisjoint(turn_obj):
-        return False
-    if isinstance(turn_obj.get("messages"), list):
-        return True
-    prompt_spans = turn_obj.get("prompt_spans")
-    if isinstance(prompt_spans, list) and len(prompt_spans) > 0:
-        return True
-    media_segments = turn_obj.get("media_segments")
-    if isinstance(media_segments, list) and len(media_segments) > 0:
-        return True
-    in_tok = turn_obj.get("in_text_tokens")
-    if not isinstance(in_tok, bool) and isinstance(in_tok, int) and in_tok > 0:
-        return True
-    return "forks" in turn_obj or "spawns" in turn_obj
+def _is_dag_turn_probe(turn: dict[str, Any]) -> bool:
+    """Return True when ``turn`` carries a DAG-specific content or branching key."""
+    in_text_tokens = turn.get("in_text_tokens")
+    return (
+        isinstance(turn.get("messages"), list)
+        or bool(isinstance(turn.get("prompt_spans"), list) and turn["prompt_spans"])
+        or bool(isinstance(turn.get("media_segments"), list) and turn["media_segments"])
+        or (type(in_text_tokens) is int and in_text_tokens > 0)
+        or "forks" in turn
+        or "spawns" in turn
+    )
 
 
 def _resolve_delay_cap_seconds(run: BenchmarkRun | None) -> float | None:
@@ -107,7 +85,8 @@ class DagJsonlLoader(BaseFileLoader):
     """Plugin loader for DAG-shaped conversation JSONL files.
 
     One :class:`DagConversation` per line. Each turn is a :class:`DagTurn`
-    carrying a required ``messages`` array plus an explicit whitelist of
+    carrying a ``messages`` array (or ``prompt_spans`` / ``media_segments``
+    synthesized at load time) plus an explicit whitelist of
     OpenAI chat-completions fields; vendor-specific fields go in
     ``extra``. Unknown top-level keys are rejected at load time.
 
@@ -154,12 +133,8 @@ class DagJsonlLoader(BaseFileLoader):
         filename: str | Path | None = None,
         *,
         run: BenchmarkRun | None = None,
-        materializer: DagMultimodalMaterializer | None = None,
-        media_scratch_dir: str | Path | None = None,
-        media_base_url: str | None = None,
-        video_wire_mode: Literal["video_url", "image_frames"] = "video_url",
-        emit_media_uuid: bool = False,
         tokenizer: Any | None = None,
+        emit_media_uuid: bool = False,
         **kwargs: Any,
     ) -> None:
         if filename is None:
@@ -178,15 +153,11 @@ class DagJsonlLoader(BaseFileLoader):
             cap_seconds = None
         self._path = Path(filename)
         self._delay_cap_tracker = DelayCapTracker(cap_seconds=cap_seconds)
-        self._materializer_arg = materializer
-        self._media_scratch_dir = (
-            Path(media_scratch_dir) if media_scratch_dir is not None else None
+        # Renders ``prompt_spans`` / ``media_segments`` / ``media_ref`` turns;
+        # authored ``messages`` without media pass through unchanged.
+        self._materializer = DagMultimodalMaterializer(
+            tokenizer=tokenizer, emit_media_uuid=emit_media_uuid
         )
-        self._media_base_url = media_base_url
-        self._video_wire_mode: Literal["video_url", "image_frames"] = video_wire_mode
-        self._emit_media_uuid = emit_media_uuid
-        self._tokenizer = tokenizer
-        self.media_staging_summary: MediaStagingSummary | None = None
         self._conversations: dict[str, Conversation] = {}
         # Per-session, per-turn list of normalized DagFork objects. Bare-string
         # entries normalize to DagFork(child=s, background=False) at parse time.
@@ -202,7 +173,6 @@ class DagJsonlLoader(BaseFileLoader):
         self._inline_pre_session_spawns: dict[str, list[str]] = {}
         self._roots: set[str] = set()
         self._loaded: bool = False
-        self._load_lock = threading.RLock()
 
     @classmethod
     def can_load(
@@ -211,10 +181,9 @@ class DagJsonlLoader(BaseFileLoader):
         """Return True when data looks like a DAG conversation line.
 
         DAG lines have top-level ``session_id`` and ``turns`` where at least
-        one turn carries a ``messages`` array, structural synthesis fields
-        (non-empty ``prompt_spans`` / ``media_segments`` or positive
-        ``in_text_tokens``), ``forks``, or ``spawns``, and no turn carries
-        ordinary ``MultiTurn`` modality keys.
+        one turn carries a ``messages`` array, non-empty ``prompt_spans`` /
+        ``media_segments``, positive ``in_text_tokens``, ``forks``, or
+        ``spawns``, and no turn carries ``MultiTurn`` modality keys.
         """
         if data is None:
             return False
@@ -232,8 +201,7 @@ class DagJsonlLoader(BaseFileLoader):
         for t in turns:
             if not isinstance(t, dict) or not _MULTI_TURN_MODALITY_KEYS.isdisjoint(t):
                 return False
-            if _is_dag_turn_probe(t):
-                has_dag_turn = True
+            has_dag_turn = has_dag_turn or _is_dag_turn_probe(t)
         return has_dag_turn
 
     @classmethod
@@ -250,15 +218,7 @@ class DagJsonlLoader(BaseFileLoader):
 
     def load_dataset(self) -> dict[str, list[Conversation]]:
         """Parse the DAG JSONL file and return session_id -> [Conversation]."""
-        with self._load_lock:
-            if self._loaded:
-                return {sid: [conv] for sid, conv in self._conversations.items()}
-            self._conversations.clear()
-            self._inline_forks.clear()
-            self._inline_spawns.clear()
-            self._inline_pre_session_spawns.clear()
-            self._roots.clear()
-            self.media_staging_summary = None
+        if not self._loaded:
             self._parse_lines()
             self._desugar_forks()
             self._resolve_and_validate()
@@ -282,7 +242,7 @@ class DagJsonlLoader(BaseFileLoader):
             )
             self._delay_cap_tracker.log_summary(logger_name=__name__)
             self._loaded = True
-            return {sid: [conv] for sid, conv in self._conversations.items()}
+        return {sid: [conv] for sid, conv in self._conversations.items()}
 
     def convert_to_conversations(
         self, data: dict[str, list[Conversation]]
@@ -300,26 +260,14 @@ class DagJsonlLoader(BaseFileLoader):
         data = self.load_dataset()
         return self.convert_to_conversations(data)
 
-    async def load_dataset_async(self) -> dict[str, list[Conversation]]:
-        """Parse and stage the DAG JSONL file off the event loop."""
-        return await asyncio.to_thread(self.load_dataset)
-
-    async def load_async(self) -> list[Conversation]:
-        """Async standalone helper offloading file and media staging I/O."""
-        return await asyncio.to_thread(self.load)
-
     def root_session_ids(self) -> set[str]:
-        with self._load_lock:
-            if not self._loaded:
-                self.load_dataset()
-            return set(self._roots)
+        if not self._loaded:
+            self.load_dataset()
+        return self._roots
 
     # --- Internal parsing ----------------------------------------------------
 
     def _parse_lines(self) -> None:
-        parsed_convs: list[DagConversation] = []
-        seen_sids: set[str] = set()
-        prefix = f"failed to parse DAG JSONL '{self._path}'"
         with self._path.open("rb") as f:
             for lineno, raw in enumerate(f, start=1):
                 # Tolerate a UTF-8 BOM on the first line (common from
@@ -329,54 +277,13 @@ class DagJsonlLoader(BaseFileLoader):
                 raw = raw.strip()
                 if not raw:
                     continue
-                dag_conv = self._validate_raw_line(lineno, raw, seen_sids, prefix)
-                parsed_convs.append(dag_conv)
-        if not parsed_convs:
+                self._parse_one_line(lineno, raw)
+        self._materializer.warn_if_inline_payload_large()
+        if not self._conversations:
             raise DagLoadError(
                 f"DAG JSONL file '{self._path}' is empty (no conversations "
                 "parsed); supply at least one conversation line"
             )
-        stage_ctx = (
-            self._materializer_arg.stage_lock
-            if self._materializer_arg is not None
-            else contextlib.nullcontext()
-        )
-        with stage_ctx:
-            try:
-                mat, summary = prepare_materializer_for_conversations(
-                    parsed_convs,
-                    materializer=self._materializer_arg,
-                    media_scratch_dir=self._media_scratch_dir,
-                    media_base_url=self._media_base_url,
-                    video_wire_mode=self._video_wire_mode,
-                    emit_media_uuid=self._emit_media_uuid,
-                    tokenizer=self._tokenizer,
-                )
-            except (ValueError, RuntimeError, OSError) as e:
-                raise DagLoadError(f"{prefix}: multimodal staging failed: {e}") from e
-            self.media_staging_summary = summary
-            for dag_conv in parsed_convs:
-                self._populate_conversation(dag_conv, materializer=mat)
-
-    def _validate_raw_line(
-        self, lineno: int, raw: bytes, seen_sids: set[str], prefix: str
-    ) -> DagConversation:
-        try:
-            obj = orjson.loads(raw)
-        except orjson.JSONDecodeError as e:
-            raise DagLoadError(f"{prefix} line {lineno}: invalid JSON: {e}") from e
-        try:
-            dag_conv = DagConversation.model_validate(obj)
-        except ValidationError as e:
-            raise DagLoadError(f"{prefix}: {format_validation_error(lineno, e)}") from e
-        sid = dag_conv.session_id
-        if sid in seen_sids:
-            raise DagLoadError(f"{prefix} line {lineno}: duplicate session_id '{sid}'")
-        seen_sids.add(sid)
-        self._inline_pre_session_spawns[sid] = self._check_pre_session_duplicates(
-            sid, prefix, lineno, dag_conv.pre_session_spawns
-        )
-        return dag_conv
 
     def _build_think_time_spec(
         self, dag_conv: DagConversation, cap_ms: float | None
@@ -418,13 +325,19 @@ class DagJsonlLoader(BaseFileLoader):
             (list(dag_conv.spawns), default_think_ms) for _ in range(dag_conv.rounds)
         ]
 
-    def _populate_conversation(
-        self,
-        dag_conv: DagConversation,
-        *,
-        materializer: DagMultimodalMaterializer | None = None,
-    ) -> None:
+    def _parse_one_line(self, lineno: int, raw: bytes) -> None:
+        prefix = f"failed to parse DAG JSONL '{self._path}'"
+        try:
+            obj = orjson.loads(raw)
+        except orjson.JSONDecodeError as e:
+            raise DagLoadError(f"{prefix} line {lineno}: invalid JSON: {e}") from e
+        try:
+            dag_conv = DagConversation.model_validate(obj)
+        except ValidationError as e:
+            raise DagLoadError(f"{prefix}: {format_validation_error(lineno, e)}") from e
         sid = dag_conv.session_id
+        if sid in self._conversations:
+            raise DagLoadError(f"{prefix} line {lineno}: duplicate session_id '{sid}'")
         turns: list[Turn] = []
         inline_forks_per_turn: list[list[DagFork]] = []
         inline_spawns_per_turn: list[list[tuple[list[str], int | None]]] = []
@@ -437,9 +350,23 @@ class DagJsonlLoader(BaseFileLoader):
         cap_ms = cap_seconds * 1000.0 if cap_seconds is not None else None
         think_time_spec = self._build_think_time_spec(dag_conv, cap_ms)
         if dag_conv.orchestrator and dag_conv.rounds is not None:
+            # Gated spine: N request-free rounds. Each round-k turn spawns the
+            # conversation-level ``spawns`` children with an explicit
+            # ``join_at=k+1`` so the NEXT turn AND-waits (join=all) for all of
+            # round k's branches before firing -- a chained conversation paced
+            # by per-round waiting. Turn N is a terminal request-free gate that
+            # waits on round N's branches and then completes the session. All
+            # turns are ``no_request`` (the spine sends no HTTP itself).
+            # Per-round think-time: the wait the coordinator applies before
+            # releasing each round. It rides ONLY the N spawning turns (0..N-1) --
+            # turn 0 via the normal strategy delay and turns 1..N-1 via the gated
+            # ``_release_blocked_join``. The terminal gate (turn N) spawns no
+            # further round, so it carries NO think-time: stamping it would delay
+            # session completion by one spurious think interval per spine.
             for k, (round_spawns, round_think_ms) in enumerate(
                 self._build_round_plans(dag_conv)
             ):
+                # Clamp the stamped (fixed / median) think-time to the delay cap.
                 capped_delay = self._delay_cap_tracker.clamp(round_think_ms)
                 turns.append(Turn(no_request=True, delay=capped_delay))
                 inline_forks_per_turn.append([])
@@ -448,18 +375,22 @@ class DagJsonlLoader(BaseFileLoader):
             inline_forks_per_turn.append([])
             inline_spawns_per_turn.append([])
         elif dag_conv.orchestrator:
+            # Synthesize a single no-op turn (no messages, no_request=True). Its
+            # conversation-level ``spawns`` desugar into a post-timing SPAWN
+            # branch via the normal ``_apply_spawns`` path (see _desugar_forks),
+            # so the orchestrator re-fires on every sampled iteration.
             turns.append(Turn(no_request=True))
             inline_forks_per_turn.append([])
             inline_spawns_per_turn.append(group_spawn_entries(list(dag_conv.spawns)))
         else:
             for turn_idx, t in enumerate(dag_conv.turns):
-                turns.append(
-                    self._build_turn(
-                        t,
-                        materializer=materializer,
-                        fallback_key=f"{sid}:{turn_idx}",
-                    )
-                )
+                try:
+                    turns.append(self._build_turn(t, fallback_key=f"{sid}:{turn_idx}"))
+                except (ValueError, RuntimeError, OSError) as e:
+                    raise DagLoadError(
+                        f"{prefix} line {lineno}: session '{sid}' turn {turn_idx}: "
+                        f"content synthesis failed: {e}"
+                    ) from e
                 inline_forks_per_turn.append([normalize_fork_entry(e) for e in t.forks])
                 inline_spawns_per_turn.append(group_spawn_entries(t.spawns))
         self._conversations[sid] = Conversation(
@@ -471,6 +402,9 @@ class DagJsonlLoader(BaseFileLoader):
         )
         self._inline_forks[sid] = inline_forks_per_turn
         self._inline_spawns[sid] = inline_spawns_per_turn
+        self._inline_pre_session_spawns[sid] = self._check_pre_session_duplicates(
+            sid, prefix, lineno, dag_conv.pre_session_spawns
+        )
 
     @staticmethod
     def _check_pre_session_duplicates(
@@ -493,21 +427,11 @@ class DagJsonlLoader(BaseFileLoader):
             seen.add(child)
         return list(children)
 
-    def _build_turn(
-        self,
-        t: DagTurn,
-        *,
-        materializer: DagMultimodalMaterializer | None = None,
-        fallback_key: str = "turn",
-    ) -> Turn:
-        if materializer is not None:
-            raw_messages = materializer.materialize_turn_messages(
-                t, fallback_key=fallback_key
-            )
-        else:
-            raw_messages = list(t.messages or [])
+    def _build_turn(self, t: DagTurn, *, fallback_key: str) -> Turn:
         return Turn(
-            raw_messages=raw_messages,
+            raw_messages=self._materializer.materialize_turn_messages(
+                t, fallback_key=fallback_key
+            ),
             raw_tools=list(t.tools) if t.tools is not None else None,
             model=t.model,
             max_tokens=t.max_tokens,
