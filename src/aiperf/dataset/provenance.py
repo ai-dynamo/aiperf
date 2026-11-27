@@ -24,7 +24,11 @@ def public_dataset_provenance(cfg: BenchmarkConfig) -> dict[str, object] | None:
 
     loader = str(dataset.dataset)
     loader_metadata = plugins.get_public_dataset_loader_metadata(loader)
-    hf_dataset_name = dataset.hf_weka_dataset or loader_metadata.hf_dataset_name
+    hf_dataset_name = (
+        dataset.hf_mooncake_dataset
+        or dataset.hf_weka_dataset
+        or loader_metadata.hf_dataset_name
+    )
     hf_subset = (
         dataset.hf_subset
         if dataset.hf_subset is not None
@@ -39,7 +43,7 @@ def public_dataset_provenance(cfg: BenchmarkConfig) -> dict[str, object] | None:
         provenance.update(
             {
                 "hf_dataset_name": hf_dataset_name,
-                "hf_split": loader_metadata.hf_split,
+                "hf_split": dataset.hf_mooncake_split or loader_metadata.hf_split,
             }
         )
     if hf_subset is not None:
