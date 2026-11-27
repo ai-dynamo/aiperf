@@ -58,6 +58,57 @@ aiperf profile \
 - `--seq-dist`: Distribution of (ISL, OSL) pairs for mixed workload simulation (default: None). See [Sequence Length Distributions](sequence-distributions.md) for format details.
 - `--random-seed`: Seed for reproducible prompt generation (default: None)
 
+### Prompt reuse and server prefix caching
+
+Synthetic prompts are generated once, then sampled from a finite pool.
+`--num-dataset-entries` sets the pool size explicitly. When omitted in a CLI-only
+run, AIPerf uses `--num-conversations` if set, otherwise `--request-count` if set,
+otherwise 100. A YAML synthetic dataset defaults to `entries: 100`.
+
+Sequential and shuffle sampling reuse entries after the pool is exhausted.
+Random sampling uses replacement and can repeat entries before exhaustion.
+It selects a conversation when a session starts, rather than drawing again for
+each turn. For fixed turn counts, preflight uses request and session limits
+plus session concurrency to bound the number of draws.
+Turn-count means and standard deviations are truncated to integers during
+generation. Preflight applies the same conversion; for example,
+`turns: {mean: 1, stddev: 0.5}` is a single-turn workload.
+Warmup uses the same dataset as profiling, so it can populate the server's
+prefix cache before measurement starts. For synthetic text runs, CLI preflight
+warns independently about:
+
+- Fixed seeds that can replay identical prompts across runs, even when the pool
+  covers the request count. A configured KV-cache reset hook suppresses this
+  cross-run warning.
+- Random sampling with replacement when more than one session can be started,
+  including duration-only workloads. Repeats can occur before pool exhaustion;
+  use sequential or shuffle sampling to avoid selection with replacement.
+- Combined configured request budgets exceeding the pool size for single-turn
+  workloads. Multi-turn and duration-only workloads are excluded from this
+  budget comparison.
+
+A per-session prefix cache-bust marker suppresses these warnings. A cache reset
+before a run does not suppress warnings about reuse within that run. These are
+configuration checks, not measurements of cache hits: duration limits and early
+stopping can reduce the actual request count.
+
+> [!WARNING]
+> Reusing `--random-seed` with the same prompt settings regenerates identical
+> synthetic prompts across runs. On a long-lived server with prefix caching,
+> repeated prompts can reuse cached prefill, affecting TTFT and throughput.
+> A large pool alone does not prevent this cross-run effect, and different
+> seeds can still produce overlapping corpus segments or shared prefixes.
+
+For uncached-prefill measurements, disable server prefix caching or reset the
+cache between runs using the server's supported
+[KV-cache reset hook](benchmark-control-hooks.md). A reset before a run does
+not prevent reuse during warmup or profiling. Size the pool to cover both
+phases, use sequential or shuffle sampling, and use distinct seeds across
+separate runs to reduce accidental reuse. These steps do not guarantee zero
+cache hits, especially with shared system prompts or prefix pools. To make
+repeated sessions distinct at the user prompt's start, use
+`--cache-bust first_turn_prefix`; a shared system prompt can still be cached.
+
 ### Advanced: Prefix Synthesis
 
 For shared-prefix benchmarking (e.g., RAG scenarios):
