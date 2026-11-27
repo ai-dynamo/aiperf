@@ -967,6 +967,11 @@ class DagMultimodalMaterializer:
         if self.media_scratch_dir is not None:
             self.media_scratch_dir.mkdir(parents=True, exist_ok=True)
         self.media_base_url = media_base_url.rstrip("/") if media_base_url else None
+        if self.media_base_url is not None and self.media_scratch_dir is None:
+            raise ValueError(
+                f"media_base_url ({self.media_base_url!r}) requires media_scratch_dir "
+                "so staged media files persist on disk for HTTP serving"
+            )
         self.emit_media_uuid = emit_media_uuid
         self.tokenizer = tokenizer
         self.ffmpeg_bin = ffmpeg_bin
@@ -976,6 +981,8 @@ class DagMultimodalMaterializer:
         )
         self._staged_wire_parts: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
         self._staged_uris: dict[tuple[Any, ...], tuple[str, ...]] = {}
+        self._staged_filenames: dict[tuple[Any, ...], tuple[str, ...]] = {}
+        self._staged_variants: dict[tuple[Any, ...], DagMediaSegment] = {}
         self._verified_files: set[tuple[str, int, int, tuple[Any, ...]]] = set()
         self._text_cache: OrderedDict[tuple[str, int], str] = OrderedDict()
         self._staged_text: dict[tuple[str, int], str] = {}
@@ -999,20 +1006,121 @@ class DagMultimodalMaterializer:
         with self._stage_lock:
             self._staged_wire_parts.clear()
             self._staged_uris.clear()
+            self._staged_filenames.clear()
+            self._staged_variants.clear()
             self._staged_text.clear()
 
+    def _validate_staged_files_for_rebase(
+        self, scratch_dir: Path, normalized_url: str
+    ) -> dict[tuple[Any, ...], tuple[str, ...]]:
+        if self._frozen_for_timed_replay:
+            for uri_key in self._staged_uris:
+                file_key = uri_key[:-1]
+                if file_key not in self._staged_filenames:
+                    raise RuntimeError(
+                        f"Cannot rebase media_base_url to {normalized_url!r} during "
+                        f"frozen timed replay without staged files for '{file_key[1]}'"
+                    )
+        valid_files: dict[tuple[Any, ...], tuple[str, ...]] = {}
+        for file_key, filenames in list(self._staged_filenames.items()):
+            if all((scratch_dir / fname).is_file() for fname in filenames):
+                valid_files[file_key] = filenames
+                continue
+            if self._frozen_for_timed_replay:
+                raise RuntimeError(
+                    f"Cannot rebase media_base_url to {normalized_url!r} during "
+                    f"frozen timed replay: staged file missing in '{scratch_dir}' "
+                    f"for '{file_key[1]}'"
+                )
+            self._staged_filenames.pop(file_key, None)
+        return valid_files
+
+    def _rebase_staged_http_artifacts(
+        self, scratch_dir: Path, normalized_url: str
+    ) -> tuple[
+        dict[tuple[Any, ...], tuple[str, ...]],
+        dict[tuple[Any, ...], list[dict[str, Any]]],
+    ]:
+        valid_files = self._validate_staged_files_for_rebase(
+            scratch_dir, normalized_url
+        )
+        rebased_uris: dict[tuple[Any, ...], tuple[str, ...]] = {
+            (*file_key, normalized_url): tuple(
+                f"{normalized_url}/{fname}" for fname in filenames
+            )
+            for file_key, filenames in valid_files.items()
+        }
+        rebased_wire_parts: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+        for variant_key, variant in list(self._staged_variants.items()):
+            wire_mode = variant_key[-1]
+            uris = rebased_uris.get((*variant.cache_key, wire_mode, normalized_url))
+            if uris is None:
+                continue
+            parts = _build_wire_parts_from_uris(
+                uris,
+                variant,
+                video_wire_mode=wire_mode,
+                emit_media_uuid=self.emit_media_uuid,
+            )
+            wire_key = (
+                *variant.cache_key,
+                variant.uuid,
+                self.emit_media_uuid,
+                wire_mode,
+                normalized_url,
+            )
+            rebased_wire_parts[wire_key] = parts
+        return rebased_uris, rebased_wire_parts
+
     def set_media_base_url(self, base_url: str | None) -> None:
-        """Update the HTTP base URL for staged media and invalidate cached wire dicts."""
+        """Update the HTTP base URL for staged media and rebase or invalidate cached wire dicts.
+
+        When ``is_frozen_for_timed_replay`` is ``True``:
+        - Updating to a non-empty HTTP ``base_url`` requires ``media_scratch_dir``
+          with all staged files present on disk, and rebases staged URIs and wire
+          parts in-place without media synthesis.
+        - Clearing ``base_url`` to ``None`` (switching to inline ``data:`` URIs)
+          is rejected with ``RuntimeError`` because inline base64 encoding is not
+          permitted during frozen timed replay.
+        """
+        normalized = base_url.rstrip("/") if base_url else None
         with self._stage_lock:
-            self.media_base_url = base_url.rstrip("/") if base_url else None
+            if normalized is not None and self.media_scratch_dir is None:
+                raise RuntimeError(
+                    f"set_media_base_url({normalized!r}) requires media_scratch_dir "
+                    "to be configured so staged files persist on disk"
+                )
+            if normalized == self.media_base_url:
+                self._config_epoch += 1
+                self._media_cache.clear()
+                return
+            if normalized is None:
+                if self._frozen_for_timed_replay:
+                    raise RuntimeError(
+                        "Cannot clear media_base_url to None (inline data URIs) "
+                        f"during frozen timed replay (current={self.media_base_url!r})"
+                    )
+                self.media_base_url = None
+                self._config_epoch += 1
+                self._media_cache.clear()
+                self._staged_wire_parts.clear()
+                self._staged_uris.clear()
+                return
+
+            assert self.media_scratch_dir is not None
+            rebased_uris, rebased_wire_parts = self._rebase_staged_http_artifacts(
+                self.media_scratch_dir, normalized
+            )
+            self.media_base_url = normalized
             self._config_epoch += 1
             self._media_cache.clear()
-            self._staged_wire_parts.clear()
-            self._staged_uris.clear()
+            self._staged_uris = rebased_uris
+            self._staged_wire_parts = rebased_wire_parts
 
     def freeze_for_timed_replay(self, frozen: bool = True) -> None:
         """Forbid any uncached media synthesis while timed benchmarking is active."""
-        self._frozen_for_timed_replay = frozen
+        with self._stage_lock:
+            self._frozen_for_timed_replay = frozen
 
     def _guard_not_frozen(self, context: str) -> None:
         if self._frozen_for_timed_replay:
@@ -1234,7 +1342,8 @@ class DagMultimodalMaterializer:
 
     def stage_media_segment(self, segment: DagMediaSegment) -> list[Path]:
         """Materialize and decode-verify ``segment`` on disk in ``media_scratch_dir``."""
-        return self._stage_media_segment(segment, allow_frozen=False)
+        with self._stage_lock:
+            return self._stage_media_segment(segment, allow_frozen=False)
 
     def _stage_media_segment(
         self,
@@ -1246,28 +1355,31 @@ class DagMultimodalMaterializer:
             self._guard_not_frozen(segment.media_hash)
         if self.media_scratch_dir is None:
             raise RuntimeError(
-                "stage_media_segment requires media_scratch_dir to be configured"
+                f"stage_media_segment for '{segment.media_hash}' requires "
+                "media_scratch_dir to be configured"
             )
         if segment.kind == "image":
             out_path = self.media_scratch_dir / staged_media_filename(segment)
             self._ensure_verified_png(
                 out_path, segment.width, segment.height, segment.media_hash
             )
-            return [out_path]
-
-        if self.video_wire_mode == "image_frames":
-            written: list[Path] = []
+            paths = [out_path]
+        elif self.video_wire_mode == "image_frames":
+            paths = []
             for idx in range(segment.num_frames):
                 fp = self.media_scratch_dir / staged_frame_filename(segment, idx)
                 self._ensure_verified_png(
                     fp, segment.width, segment.height, f"{segment.media_hash}:f{idx}"
                 )
-                written.append(fp)
-            return written
-
-        mp4_path = self.media_scratch_dir / staged_media_filename(segment)
-        self._ensure_verified_mp4(mp4_path, segment)
-        return [mp4_path]
+                paths.append(fp)
+        else:
+            mp4_path = self.media_scratch_dir / staged_media_filename(segment)
+            self._ensure_verified_mp4(mp4_path, segment)
+            paths = [mp4_path]
+        self._staged_filenames[(*segment.cache_key, self.video_wire_mode)] = tuple(
+            p.name for p in paths
+        )
+        return paths
 
     def _ensure_verified_png(
         self, out_path: Path, width: int, height: int, seed_key: str
@@ -1371,12 +1483,10 @@ class DagMultimodalMaterializer:
                 staged_uris = self._staged_uris.get(uri_key)
                 if staged_uris is None:
                     self._guard_not_frozen(segment.media_hash)
+                    uris = self._compute_segment_uris(segment)
+                else:
+                    uris = staged_uris
 
-            uris = (
-                staged_uris
-                if staged_uris is not None
-                else self._compute_segment_uris(segment)
-            )
             parts = _build_wire_parts_from_uris(
                 uris,
                 segment,
@@ -1515,6 +1625,10 @@ class DagMultimodalMaterializer:
                     unique_videos += 1
 
             for variant in wire_variants.values():
+                if self.media_scratch_dir is not None:
+                    self._staged_variants[
+                        (*variant.cache_key, variant.uuid, self.video_wire_mode)
+                    ] = variant
                 uris = self._staged_uris[self._uri_cache_key(variant)]
                 parts = _build_wire_parts_from_uris(
                     uris,
@@ -1744,6 +1858,8 @@ def prepare_materializer_for_conversations(
         )
         summary = mat.stage_turns(all_turns, fallback_keys=fallback_keys)
         mat.media_scratch_dir = None
+        mat._staged_filenames.clear()
+        mat._staged_variants.clear()
         mat.freeze_for_timed_replay(True)
         return mat, summary
 

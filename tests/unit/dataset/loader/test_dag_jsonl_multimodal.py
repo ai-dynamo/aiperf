@@ -1670,6 +1670,8 @@ class TestDagLoaderMultimodalDeduplicationAndReplay:
         shared_mat.clear_staged_cache()
         assert shared_mat._staged_uris == {}
         assert shared_mat._staged_wire_parts == {}
+        assert shared_mat._staged_filenames == {}
+        assert shared_mat._staged_variants == {}
         assert shared_mat._staged_text == {}
 
     @pytest.mark.asyncio
@@ -1690,9 +1692,11 @@ class TestDagLoaderMultimodalDeduplicationAndReplay:
             )
             for idx in range(2)
         ]
-        mat = DagMultimodalMaterializer(
-            media_scratch_dir=tmp_path,
-            media_base_url="http://127.0.0.1:9001",
+        mat = await asyncio.to_thread(
+            lambda: DagMultimodalMaterializer(
+                media_scratch_dir=tmp_path,
+                media_base_url="http://127.0.0.1:9001",
+            )
         )
         real_stage_lock = mat._stage_lock
         seen_lock_threads: set[int] = set()
@@ -1752,9 +1756,19 @@ class TestDagLoaderMultimodalDeduplicationAndReplay:
 
         assert summary.media_base_url == "http://127.0.0.1:9001"
         assert mat.media_base_url == "http://127.0.0.1:9002"
-        assert mat._staged_uris == {}
-        assert mat._staged_wire_parts == {}
         assert mat._media_cache == {}
+        assert len(mat._staged_uris) == 2
+        assert all(
+            uri.startswith("http://127.0.0.1:9002/")
+            for uris in mat._staged_uris.values()
+            for uri in uris
+        )
+        assert len(mat._staged_wire_parts) == 2
+        assert all(
+            part["image_url"]["url"].startswith("http://127.0.0.1:9002/")
+            for parts in mat._staged_wire_parts.values()
+            for part in parts
+        )
 
     @pytest.mark.asyncio
     async def test_concurrent_load_async_and_cancellation_serialize_initialization(
@@ -1863,33 +1877,37 @@ class TestDagLoaderMultimodalDeduplicationAndReplay:
     async def test_load_async_holds_shared_materializer_lock_through_population(
         self, tmp_path: Path
     ) -> None:
-        scratch_dir = tmp_path / "media"
-        path = _write_dag(
-            tmp_path,
-            [
-                {
-                    "session_id": "root",
-                    "turns": [
-                        {
-                            "media_segments": [
-                                {
-                                    "media_hash": "shared_img",
-                                    "kind": "image",
-                                    "width": 32,
-                                    "height": 32,
-                                }
-                            ],
-                            "in_text_tokens": 4,
-                        }
-                    ],
-                }
-            ],
-            name="shared_populate_lock.dag.jsonl",
-        )
-        shared_mat = DagMultimodalMaterializer(
-            media_scratch_dir=scratch_dir,
-            media_base_url="http://127.0.0.1:9001",
-        )
+        def _setup() -> tuple[Path, DagMultimodalMaterializer]:
+            scratch_dir = tmp_path / "media"
+            dag_file = _write_dag(
+                tmp_path,
+                [
+                    {
+                        "session_id": "root",
+                        "turns": [
+                            {
+                                "media_segments": [
+                                    {
+                                        "media_hash": "shared_img",
+                                        "kind": "image",
+                                        "width": 32,
+                                        "height": 32,
+                                    }
+                                ],
+                                "in_text_tokens": 4,
+                            }
+                        ],
+                    }
+                ],
+                name="shared_populate_lock.dag.jsonl",
+            )
+            mat = DagMultimodalMaterializer(
+                media_scratch_dir=scratch_dir,
+                media_base_url="http://127.0.0.1:9001",
+            )
+            return dag_file, mat
+
+        path, shared_mat = await asyncio.to_thread(_setup)
         real_stage_lock = shared_mat._stage_lock
         seen_lock_threads: set[int] = set()
         meta_lock = threading.Lock()
@@ -1972,23 +1990,29 @@ class TestDagLoaderMultimodalDeduplicationAndReplay:
             height=32,
             uuid="u2",
         )
-        mat = DagMultimodalMaterializer(
-            media_scratch_dir=tmp_path,
-            media_base_url="http://127.0.0.1:9001",
-            emit_media_uuid=True,
+        mat = await asyncio.to_thread(
+            lambda: DagMultimodalMaterializer(
+                media_scratch_dir=tmp_path,
+                media_base_url="http://127.0.0.1:9001",
+                emit_media_uuid=True,
+            )
         )
-        mat.stage_turns([DagTurn(media_segments=[seg_u1], in_text_tokens=4)])
+        await mat.async_stage_turns(
+            [DagTurn(media_segments=[seg_u1], in_text_tokens=4)]
+        )
+        mat.freeze_for_timed_replay(True)
 
         entered_build = threading.Event()
         release_build = threading.Event()
-        calls = 0
+        u2_calls = 0
 
         def _paused_first_build(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                entered_build.set()
-                assert release_build.wait(timeout=5.0)
+            nonlocal u2_calls
+            if args[1].uuid == "u2":
+                u2_calls += 1
+                if u2_calls == 1:
+                    entered_build.set()
+                    assert release_build.wait(timeout=5.0)
             return _build_wire_parts_from_uris(*args, **kwargs)
 
         with patch(
@@ -2002,9 +2026,211 @@ class TestDagLoaderMultimodalDeduplicationAndReplay:
             await asyncio.to_thread(mat.set_media_base_url, "http://127.0.0.1:9002/")
             release_build.set()
             parts = await render_task
+            u1_parts = await asyncio.to_thread(mat.render_media_parts, seg_u1)
 
-        assert calls == 2
+        assert u2_calls == 2
+        assert mat.encode_calls_during_timed_replay == 0
         assert len(parts) == 1
         assert parts[0]["uuid"] == "u2"
         assert parts[0]["image_url"]["url"].startswith("http://127.0.0.1:9002/")
+        assert u1_parts[0]["uuid"] == "u1"
+        assert u1_parts[0]["image_url"]["url"].startswith("http://127.0.0.1:9002/")
         assert list(mat._media_cache.keys()) == [mat._wire_cache_key(seg_u2)]
+
+    @pytest.mark.asyncio
+    async def test_freeze_for_timed_replay_serializes_with_uncached_render_synthesis(
+        self, tmp_path: Path
+    ) -> None:
+        seg_in_flight = DagMediaSegment(
+            media_hash="img_in_flight",
+            kind="image",
+            width=32,
+            height=32,
+        )
+        seg_after_freeze = DagMediaSegment(
+            media_hash="img_after_freeze",
+            kind="image",
+            width=32,
+            height=32,
+        )
+        mat = await asyncio.to_thread(
+            lambda: DagMultimodalMaterializer(media_scratch_dir=tmp_path)
+        )
+        real_stage_lock = mat._stage_lock
+        seen_lock_threads: set[int] = set()
+        meta_lock = threading.Lock()
+        freeze_attempted_lock = threading.Event()
+        orig_compute = mat._compute_segment_uris
+        entered_compute = threading.Event()
+        release_compute = threading.Event()
+        freeze_finished = threading.Event()
+        compute_tid: int | None = None
+        observed_frozen_in_compute: list[bool] = []
+
+        class _TrackingRLock:
+            def __enter__(self) -> Any:
+                with meta_lock:
+                    seen_lock_threads.add(threading.get_ident())
+                    if len(seen_lock_threads) >= 2:
+                        freeze_attempted_lock.set()
+                return real_stage_lock.__enter__()
+
+            def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool | None:
+                return real_stage_lock.__exit__(exc_type, exc, tb)
+
+        mat._stage_lock = _TrackingRLock()  # type: ignore[assignment]
+
+        def _probe_nonblocking_acquire() -> tuple[int, bool]:
+            acquired = real_stage_lock.acquire(blocking=False)
+            if acquired:
+                real_stage_lock.release()
+            return threading.get_ident(), acquired
+
+        def _paused_compute(seg: DagMediaSegment) -> tuple[str, ...]:
+            nonlocal compute_tid
+            compute_tid = threading.get_ident()
+            entered_compute.set()
+            assert release_compute.wait(timeout=5.0)
+            observed_frozen_in_compute.append(mat.is_frozen_for_timed_replay)
+            return orig_compute(seg)
+
+        def _freeze_worker() -> None:
+            mat.freeze_for_timed_replay(True)
+            freeze_finished.set()
+
+        with patch.object(mat, "_compute_segment_uris", side_effect=_paused_compute):
+            render_task = asyncio.create_task(
+                asyncio.to_thread(mat.render_media_parts, seg_in_flight)
+            )
+            assert await asyncio.to_thread(entered_compute.wait, 5.0) is True
+            probe_tid, lock_acquired = await asyncio.to_thread(
+                _probe_nonblocking_acquire
+            )
+            assert probe_tid != compute_tid
+            assert lock_acquired is False
+
+            freeze_task = asyncio.create_task(asyncio.to_thread(_freeze_worker))
+            assert await asyncio.to_thread(freeze_attempted_lock.wait, 5.0) is True
+            assert freeze_finished.is_set() is False
+            release_compute.set()
+            parts = await render_task
+            await freeze_task
+
+            assert len(parts) == 1
+            assert observed_frozen_in_compute == [False]
+            assert mat.is_frozen_for_timed_replay is True
+            assert mat.encode_calls_during_timed_replay == 0
+
+            with pytest.raises(RuntimeError, match="frozen timed replay"):
+                await asyncio.to_thread(mat.render_media_parts, seg_after_freeze)
+            assert mat.encode_calls_during_timed_replay == 1
+            assert observed_frozen_in_compute == [False]
+
+    def test_set_media_base_url_frozen_contract_rebases_scratch_and_rejects_inline(
+        self, tmp_path: Path
+    ) -> None:
+        scratch = tmp_path / "scratch"
+        seg_staged = DagMediaSegment(
+            media_hash="img_staged_rebase",
+            kind="image",
+            width=32,
+            height=32,
+            uuid="u_staged",
+        )
+        vid_staged = DagMediaSegment(
+            media_hash="vid_staged_rebase",
+            kind="video",
+            width=32,
+            height=32,
+            fps=12.0,
+            num_frames=2,
+        )
+        seg_new_uuid = DagMediaSegment(
+            media_hash="img_staged_rebase",
+            kind="image",
+            width=32,
+            height=32,
+            uuid="u_rebased",
+        )
+        seg_unstaged = DagMediaSegment(
+            media_hash="img_never_staged",
+            kind="image",
+            width=32,
+            height=32,
+        )
+        dag_path = _write_dag(
+            tmp_path,
+            [
+                {
+                    "session_id": "root",
+                    "turns": [
+                        {
+                            "media_segments": [
+                                seg_staged.model_dump(exclude_none=True),
+                                vid_staged.model_dump(exclude_none=True),
+                            ],
+                            "in_text_tokens": 4,
+                        }
+                    ],
+                }
+            ],
+            name="rebase_frozen.dag.jsonl",
+        )
+
+        # Stage while media_base_url is None (e.g. before HTTP server port bind),
+        # freeze via DagJsonlLoader.load(), then rebase onto an HTTP base URL.
+        mat = DagMultimodalMaterializer(
+            video_wire_mode="image_frames",
+            media_scratch_dir=scratch,
+            media_base_url=None,
+            emit_media_uuid=True,
+        )
+        DagJsonlLoader(
+            dag_path, materializer=mat, video_wire_mode="image_frames"
+        ).load()
+        assert mat.is_frozen_for_timed_replay is True
+
+        with patch(
+            "aiperf.dataset.loader.dag_jsonl_media.synth_deterministic_png_bytes",
+            side_effect=AssertionError("unexpected synthesis during URL rebase"),
+        ):
+            mat.set_media_base_url("http://127.0.0.1:9101/")
+            staged_parts = mat.render_media_parts(seg_staged)
+            vid_parts = mat.render_media_parts(vid_staged)
+            uuid_parts = mat.render_media_parts(seg_new_uuid)
+            mat.set_media_base_url("http://127.0.0.1:9102/")
+            rebased_parts = mat.render_media_parts(seg_staged)
+
+        assert staged_parts[0]["uuid"] == "u_staged"
+        assert staged_parts[0]["image_url"]["url"].startswith("http://127.0.0.1:9101/")
+        assert len(vid_parts) == 2
+        assert all(
+            p["image_url"]["url"].startswith("http://127.0.0.1:9101/")
+            for p in vid_parts
+        )
+        assert uuid_parts[0]["uuid"] == "u_rebased"
+        assert uuid_parts[0]["image_url"]["url"].startswith("http://127.0.0.1:9101/")
+        assert rebased_parts[0]["image_url"]["url"].startswith("http://127.0.0.1:9102/")
+        assert mat.encode_calls_during_timed_replay == 0
+
+        # Reject switching back to inline data URIs while frozen, leaving HTTP URLs intact.
+        with pytest.raises(RuntimeError, match="Cannot clear media_base_url to None"):
+            mat.set_media_base_url(None)
+        assert mat.media_base_url == "http://127.0.0.1:9102"
+        assert mat.render_media_parts(seg_staged)[0]["image_url"]["url"].startswith(
+            "http://127.0.0.1:9102/"
+        )
+
+        # Unstaged segment still hits the frozen guard.
+        with pytest.raises(RuntimeError, match="frozen timed replay"):
+            mat.render_media_parts(seg_unstaged)
+        assert mat.encode_calls_during_timed_replay == 1
+
+        # Frozen inline materializer without media_scratch_dir rejects HTTP base URLs.
+        inline_mat = DagMultimodalMaterializer(video_wire_mode="image_frames")
+        DagJsonlLoader(
+            dag_path, materializer=inline_mat, video_wire_mode="image_frames"
+        ).load()
+        assert inline_mat.is_frozen_for_timed_replay is True
+        with pytest.raises(RuntimeError, match="requires media_scratch_dir"):
+            inline_mat.set_media_base_url("http://127.0.0.1:9103")
