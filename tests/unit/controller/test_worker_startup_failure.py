@@ -17,6 +17,7 @@ the credit router".
 """
 
 import asyncio
+import multiprocessing
 from collections import Counter
 from multiprocessing import Process
 from unittest.mock import AsyncMock, MagicMock
@@ -209,10 +210,14 @@ async def test_a_worker_reaped_before_its_error_arrives_is_still_tolerated(
     benchmark_run,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    process_cls = MagicMock(side_effect=lambda **_: MagicMock(spec=Process))
+    # A forkserver default (Linux on Python 3.14+) launches services through
+    # an explicit context instead of multiprocessing.Process.
     monkeypatch.setattr(
-        "aiperf.controller.multiprocess_service_manager.Process",
-        MagicMock(side_effect=lambda **_: MagicMock(spec=Process)),
+        "aiperf.controller.multiprocess_service_manager.Process", process_cls
     )
+    for method in multiprocessing.get_all_start_methods():
+        monkeypatch.setattr(multiprocessing.get_context(method), "Process", process_cls)
     manager = MultiProcessServiceManager(required_services={}, run=benchmark_run)
     await manager.run_service(ServiceType.WORKER, num_replicas=2)
     dead, alive = manager.multi_process_info

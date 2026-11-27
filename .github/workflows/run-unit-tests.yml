@@ -55,7 +55,7 @@ jobs:
         pr_subset = [coverage_leg, ("macos", "3.12"), ("windows", "3.11")]
         full = not os.environ["REF"].startswith("refs/heads/pull-request/")
         legs = (
-            [(o, py) for o in runners for py in ("3.11", "3.12", "3.13")]
+            [(o, py) for o in runners for py in ("3.11", "3.12", "3.13", "3.14")]
             if full
             else pr_subset
         )
