@@ -1,9 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from urllib.parse import urlsplit, urlunsplit
 
-def normalize_metrics_endpoint_url(url: str) -> str:
-    """Ensure metrics endpoint URL has a scheme and ends with /metrics suffix.
+
+def normalize_metrics_endpoint_url(
+    url: str, *, preserve_explicit_path: bool = False
+) -> str:
+    """Ensure a metrics endpoint URL has a scheme and a usable path.
 
     Works with Prometheus, DCGM, and other compatible endpoints.
     This utility is used by both TelemetryManager and ServerMetricsManager
@@ -12,11 +16,15 @@ def normalize_metrics_endpoint_url(url: str) -> str:
 
     Args:
         url: Base URL or full metrics URL (e.g., "http://localhost:9400" or
-             "localhost:9400/metrics")
+             "localhost:9400/metrics").
+        preserve_explicit_path: Keep a non-root path supplied by the user instead
+            of appending ``/metrics``. Root and pathless URLs still receive the
+            default suffix.
 
     Returns:
-        URL with an http/https scheme, ending with /metrics, with trailing
-        slashes removed (e.g., "http://localhost:9400/metrics")
+        URL with an http/https scheme. Explicit paths are preserved verbatim
+        when requested; otherwise trailing slashes are removed and the URL path
+        ends with ``/metrics``.
 
     Raises:
         ValueError: If URL is empty or whitespace-only
@@ -28,6 +36,10 @@ def normalize_metrics_endpoint_url(url: str) -> str:
         "http://localhost:9400/metrics"
         >>> normalize_metrics_endpoint_url("http://localhost:9400/metrics")
         "http://localhost:9400/metrics"
+        >>> normalize_metrics_endpoint_url(
+        ...     "https://localhost/prometheus", preserve_explicit_path=True
+        ... )
+        "https://localhost/prometheus"
     """
     if not url or not url.strip():
         raise ValueError("URL cannot be empty or whitespace-only")
@@ -35,7 +47,11 @@ def normalize_metrics_endpoint_url(url: str) -> str:
     if not url.startswith(("http://", "https://")):
         url = f"http://{url}"
 
-    url = url.rstrip("/")
-    if not url.endswith("/metrics"):
-        url = f"{url}/metrics"
-    return url
+    parts = urlsplit(url)
+    if preserve_explicit_path and parts.path not in ("", "/"):
+        return url
+
+    path = parts.path.rstrip("/")
+    if not path.endswith("/metrics"):
+        path = f"{path}/metrics"
+    return urlunsplit(parts._replace(path=path))

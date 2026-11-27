@@ -152,6 +152,7 @@ async def handle(
             validated.benchmark.endpoint,
             validated.pod_template.env,
             datasets=validated.benchmark.datasets,
+            server_metrics=validated.benchmark.server_metrics,
         )
         validate_kubernetes_sweep_credential_axes(validated.sweep)
     except (ConfigurationError, ValidationError, ValueError) as e:

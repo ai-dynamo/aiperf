@@ -14,6 +14,7 @@ Ports v1 ``_parse_otel_config`` and ``_normalize_otel_metrics_url``:
 from __future__ import annotations
 
 import pytest
+from cyclopts.exceptions import ValidationError as CycloptsValidationError
 
 from aiperf.common.enums import ServerMetricsFormat
 from aiperf.config.flags._converter_telemetry import (
@@ -22,6 +23,7 @@ from aiperf.config.flags._converter_telemetry import (
     build_server_metrics,
 )
 from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config.flags.converter import convert_cli_to_aiperf
 
 
 def _make_cli(**overrides) -> CLIConfig:
@@ -47,6 +49,114 @@ class TestServerMetricsCliParity:
             ValueError, match="Cannot use both --no-server-metrics and --server-metrics"
         ):
             build_server_metrics(cli)
+
+    def test_server_metrics_preserves_explicit_endpoint_path(self) -> None:
+        config = build_server_metrics(
+            _make_cli(server_metrics=["https://metrics.example/prometheus"])
+        )
+
+        assert config["urls"] == ["https://metrics.example/prometheus"]
+
+    def test_server_metrics_headers_reach_config_independently_of_request_headers(
+        self,
+    ):
+        config = convert_cli_to_aiperf(
+            _make_cli(
+                headers=[("X-Request-Header", "request-value")],
+                server_metrics_headers=[
+                    ("Authorization", "Bearer metrics-secret"),
+                    ("X-Tenant", "tenant-a"),
+                ],
+            )
+        )
+
+        assert config.benchmark.endpoint.headers == {
+            "X-Request-Header": "request-value"
+        }
+        assert config.benchmark.server_metrics.headers == {
+            "Authorization": "Bearer metrics-secret",
+            "X-Tenant": "tenant-a",
+        }
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("X-Request-ID:123", "123"),
+            ("X-Enabled:true", "true"),
+            ("X-Optional:null", "null"),
+            ("Accept:application/json,text/plain", "application/json,text/plain"),
+        ],
+    )
+    def test_server_metrics_header_cli_preserves_text_values(
+        self, raw: str, expected: str
+    ) -> None:
+        from aiperf.cli import app
+        from aiperf.config.flags.resolver import resolve_config
+
+        argv = [
+            "profile",
+            "--model",
+            "m",
+            "--url",
+            "http://127.0.0.1:8000",
+            "--server-metrics-header",
+            raw,
+        ]
+        _, bound, _ = app.parse_args(argv, exit_on_error=False, print_error=False)
+
+        resolved = resolve_config(bound.arguments["cli_config"], None)
+
+        assert resolved.benchmark.server_metrics.headers == {
+            raw.partition(":")[0]: expected
+        }
+
+    def test_server_metrics_header_cli_accepts_whitespace_prefixed_json(self) -> None:
+        from aiperf.cli import app
+        from aiperf.config.flags.resolver import resolve_config
+
+        argv = [
+            "profile",
+            "--model",
+            "m",
+            "--url",
+            "http://127.0.0.1:8000",
+            "--server-metrics-header",
+            '  {"Authorization":"Bearer metrics-secret","X-Tenant":"tenant-a"}',
+        ]
+        _, bound, _ = app.parse_args(argv, exit_on_error=False, print_error=False)
+
+        resolved = resolve_config(bound.arguments["cli_config"], None)
+        assert resolved.benchmark.server_metrics.headers == {
+            "Authorization": "Bearer metrics-secret",
+            "X-Tenant": "tenant-a",
+        }
+
+    @pytest.mark.parametrize(
+        "raw, secret",
+        [
+            ('{"Authorization":"malformed-secret"', "malformed-secret"),
+            ("Authorization missing-colon-secret", "missing-colon-secret"),
+        ],
+    )
+    def test_server_metrics_header_cli_errors_do_not_echo_values(
+        self, raw: str, secret: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from aiperf.cli import app
+
+        argv = [
+            "profile",
+            "--model",
+            "m",
+            "--url",
+            "http://127.0.0.1:8000",
+            "--server-metrics-header",
+            raw,
+        ]
+        with pytest.raises(CycloptsValidationError) as exc_info:
+            app.parse_args(argv, exit_on_error=False, print_error=False)
+
+        assert secret not in str(exc_info.value)
+        assert secret not in caplog.text
 
 
 class TestOtelUrlNormalization:

@@ -205,6 +205,7 @@ def _build_deployment(
         run.cfg.endpoint,
         deploy_config.pod_template.env,
         datasets=run.cfg.datasets,
+        server_metrics=run.cfg.server_metrics,
     )
 
     deployment = KubernetesDeployment(

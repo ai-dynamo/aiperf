@@ -150,6 +150,7 @@ def _build_cr_spec_and_config(
         config.benchmark.endpoint,
         dc.pod_template.env,
         datasets=config.benchmark.datasets,
+        server_metrics=config.benchmark.server_metrics,
     )
     dc_dict = dc.model_dump(
         mode="json", by_alias=True, exclude_unset=True, exclude_none=True

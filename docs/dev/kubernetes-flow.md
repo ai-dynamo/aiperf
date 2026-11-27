@@ -962,13 +962,13 @@ the flag accumulates entries instead of raising `RepeatArgumentError`.
 Sensitive endpoint fields never rely on the ConfigMap copy. JSON
 serialization redacts them, and `aiperf service --benchmark-run` restores them
 from the Secret-backed `AIPERF_INJECTED_API_KEY`/`OPENAI_API_KEY`,
-`AIPERF_INJECTED_HEADERS`, and `AIPERF_INJECTED_ENDPOINT_URLS` environment
-variables. Presigned dataset URLs travel the same way, through
+`AIPERF_INJECTED_HEADERS`, `AIPERF_INJECTED_SERVER_METRICS_HEADERS`, and
+`AIPERF_INJECTED_ENDPOINT_URLS` environment variables.
+Presigned dataset URLs travel the same way, through
 `AIPERF_INJECTED_DATASET_URLS`, which the JobSet builder renders into the dataset-manager
 container only (`build_env_vars(dataset_downloader=...)`); the AIPerfSweep controller's
 container is rendered without it too, since child jobs take it from the sweep spec.
-Generation and operator
-reconciliation fail closed when the
+Generation and operator reconciliation fail closed when the
 corresponding `valueFrom.secretKeyRef` mapping is absent.
 `aiperf service` requires `--benchmark-run` and never resolves per-container
 benchmark flags.

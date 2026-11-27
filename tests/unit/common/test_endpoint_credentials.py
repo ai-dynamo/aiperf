@@ -2,14 +2,21 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for endpoint credential consumption and rehydration."""
 
+from pathlib import Path
+
 import pytest
+from pytest import param
 
 from aiperf.common.endpoint_credentials import (
     AIPERF_INJECTED_API_KEY,
+    AIPERF_INJECTED_SERVER_METRICS_HEADERS,
     OPENAI_API_KEY,
     EndpointCredentialInjection,
     apply_endpoint_credentials,
     consume_endpoint_credentials,
+    redact_sweep_public_data,
+    validate_kubernetes_credential_transport,
+    validate_kubernetes_sweep_credential_axes,
 )
 from aiperf.common.redact import REDACTED_VALUE
 from aiperf.config import BenchmarkConfig
@@ -55,6 +62,7 @@ def _benchmark_run(tmp_path, api_key: str | None) -> BenchmarkRun:
 @pytest.fixture(autouse=True)
 def _clean_credential_env(monkeypatch):
     monkeypatch.delenv(AIPERF_INJECTED_API_KEY, raising=False)
+    monkeypatch.delenv(AIPERF_INJECTED_SERVER_METRICS_HEADERS, raising=False)
     monkeypatch.delenv(OPENAI_API_KEY, raising=False)
 
 
@@ -79,6 +87,23 @@ class TestConsumeEndpointCredentials:
 
         assert credentials.api_key == _INJECTED_KEY
         assert credentials.api_key_from_alias is False
+
+    def test_consume_pops_server_metrics_headers(self, monkeypatch):
+        import os
+
+        import orjson
+
+        monkeypatch.setenv(
+            AIPERF_INJECTED_SERVER_METRICS_HEADERS,
+            orjson.dumps({"Authorization": "Bearer metrics-secret"}).decode(),
+        )
+
+        credentials = consume_endpoint_credentials()
+
+        assert AIPERF_INJECTED_SERVER_METRICS_HEADERS not in os.environ
+        assert credentials.server_metrics_headers == {
+            "Authorization": "Bearer metrics-secret"
+        }
 
 
 class TestApplyEndpointCredentials:
@@ -142,6 +167,51 @@ class TestApplyEndpointCredentials:
         apply_endpoint_credentials(run, credentials, require_resolved=True)
 
         assert run.cfg.endpoint.api_key is None
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        param("server_metrics.headers", id="mapping"),
+        param("benchmark.serverMetrics.headers.X-Proxy", id="aliased-entry"),
+    ],
+)  # fmt: skip
+def test_metrics_headers_are_protected_in_sweep_axes(path: str) -> None:
+    sweep = {"parameters": {path: ["synthetic-metrics-value"]}}
+
+    with pytest.raises(ValueError, match="cannot vary credential-bearing values"):
+        validate_kubernetes_sweep_credential_axes(sweep)
+
+    assert redact_sweep_public_data(sweep) == {
+        "parameters": {path: REDACTED_VALUE},
+    }
+
+
+def test_kubernetes_metrics_headers_require_their_own_secret(tmp_path: Path) -> None:
+    run = _benchmark_run(tmp_path, None)
+    run.cfg.server_metrics.headers["Authorization"] = "Bearer synthetic-metrics-value"
+
+    with pytest.raises(ValueError, match=AIPERF_INJECTED_SERVER_METRICS_HEADERS):
+        validate_kubernetes_credential_transport(
+            run.cfg.endpoint,
+            [{"name": AIPERF_INJECTED_SERVER_METRICS_HEADERS, "value": "literal"}],
+            datasets=run.cfg.datasets,
+            server_metrics=run.cfg.server_metrics,
+        )
+
+    validate_kubernetes_credential_transport(
+        run.cfg.endpoint,
+        [
+            {
+                "name": AIPERF_INJECTED_SERVER_METRICS_HEADERS,
+                "valueFrom": {
+                    "secretKeyRef": {"name": "metrics-headers", "key": "headers"}
+                },
+            }
+        ],
+        datasets=run.cfg.datasets,
+        server_metrics=run.cfg.server_metrics,
+    )
 
 
 def test_ambient_shell_key_does_not_reach_an_unconfigured_endpoint(

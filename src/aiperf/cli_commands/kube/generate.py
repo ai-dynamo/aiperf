@@ -85,6 +85,7 @@ def _build_sweep_spec(
         config.benchmark.endpoint,
         dc.pod_template.env,
         datasets=config.benchmark.datasets,
+        server_metrics=config.benchmark.server_metrics,
     )
     dc_dict = dc.model_dump(
         mode="json", by_alias=True, exclude_unset=True, exclude_none=True
@@ -248,6 +249,7 @@ def _dump_raw_manifests(
         config.benchmark.endpoint,
         deploy_config.pod_template.env,
         datasets=config.benchmark.datasets,
+        server_metrics=config.benchmark.server_metrics,
     )
 
     manifests = deployment.get_all_manifests()

@@ -22,6 +22,7 @@ def build_server_metrics_override(cli: CLIConfig) -> dict[str, Any] | None:
     """
     fields_set = cli.model_fields_set & {
         "server_metrics",
+        "server_metrics_headers",
         "server_metrics_formats",
         "no_server_metrics",
     }
@@ -37,6 +38,10 @@ def build_server_metrics_override(cli: CLIConfig) -> dict[str, Any] | None:
     elif "server_metrics" in fields_set:
         override["enabled"] = True
         override["urls"] = built["urls"]
+
+    if "server_metrics_headers" in fields_set and "headers" in built:
+        override["enabled"] = True
+        override["headers"] = built["headers"]
 
     if "server_metrics_formats" in fields_set and "formats" in built:
         override["enabled"] = True

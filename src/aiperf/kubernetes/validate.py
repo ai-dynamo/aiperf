@@ -437,6 +437,7 @@ def validate_endpoint_credential_transport(
             config.benchmark.endpoint,
             deployment.pod_template.env,
             datasets=config.benchmark.datasets,
+            server_metrics=config.benchmark.server_metrics,
         )
     except (
         ConfigurationError,

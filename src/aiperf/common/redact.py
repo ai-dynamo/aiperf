@@ -9,6 +9,8 @@ from copy import deepcopy
 from typing import Any
 from urllib.parse import unquote_plus
 
+import orjson
+
 REDACTED_VALUE = "<redacted>"
 
 # Header names (case-insensitive) whose values carry credentials.
@@ -125,6 +127,34 @@ _STRING_REDACTION_PATTERNS = [
     ),
 ]
 
+_CUSTOM_HEADER_NAME = r"[A-Za-z0-9!#$%&'*+.^_`|~-]+"
+_UNQUOTED_HEADER_NAME = r"[A-Za-z0-9!#$%&*+.^_`|~-]+"
+_HYPHENATED_CUSTOM_HEADER_NAME = rf"{_CUSTOM_HEADER_NAME}-{_CUSTOM_HEADER_NAME}"
+_QUOTED_CUSTOM_HEADER_PATTERN = re.compile(
+    rf"(?P<name_quote>['\"])(?P<name>{_HYPHENATED_CUSTOM_HEADER_NAME})"
+    rf"(?P=name_quote)"
+    rf"(?P<separator>\s*:\s*)(?P<value_quote>['\"])(?P<value>.*?)(?P=value_quote)",
+    re.IGNORECASE,
+)
+_PLAIN_CUSTOM_HEADER_PATTERN = re.compile(
+    rf"(?P<name>\b{_HYPHENATED_CUSTOM_HEADER_NAME})(?P<separator>\s*:\s*)"
+    r"(?P<value>[^\s,;'\"}]+)",
+    re.IGNORECASE,
+)
+
+
+def _redact_custom_header_match(match: re.Match[str]) -> str:
+    if not is_sensitive_header_name(match.group("name")):
+        return match.group(0)
+    groups = match.groupdict()
+    if groups.get("name_quote"):
+        return (
+            f"{groups['name_quote']}{groups['name']}{groups['name_quote']}"
+            f"{groups['separator']}{groups['value_quote']}"
+            f"{REDACTED_VALUE}{groups['value_quote']}"
+        )
+    return f"{groups['name']}{groups['separator']}{REDACTED_VALUE}"
+
 
 def redact_headers(headers: dict[str, str] | None) -> dict[str, str] | None:
     """Return a copy of headers with sensitive values replaced by REDACTED_VALUE.
@@ -145,11 +175,10 @@ def extract_sensitive_headers(headers: dict[str, str] | None) -> dict[str, str]:
     """Return only the entries from ``headers`` that ``redact_headers`` would
     redact, keyed by their original (un-lowercased) name.
 
-    Used by orchestrator IPC: ``EndpointConfig.headers`` is redacted on every
-    JSON dump, so the subprocess loads a ``run_config.json`` whose
-    credential-bearing headers carry the literal string ``<redacted>``. The
-    parent forwards the real values out-of-band via ``AIPERF_INJECTED_HEADERS``
-    and the child overlays them back onto the loaded config.
+    Used by orchestrator IPC: credential-bearing header mappings are redacted
+    on every JSON dump, so the subprocess loads a ``run_config.json`` whose
+    sensitive values carry the literal string ``<redacted>``. Callers choose
+    the dedicated injection channel for the config section being rehydrated.
     """
     if not headers:
         return {}
@@ -174,6 +203,8 @@ def redact_string(value: str) -> str:
     """Redact credentials embedded in an arbitrary string (e.g., exception repr)."""
     for pattern, repl in _STRING_REDACTION_PATTERNS:
         value = pattern.sub(repl, value)
+    value = _QUOTED_CUSTOM_HEADER_PATTERN.sub(_redact_custom_header_match, value)
+    value = _PLAIN_CUSTOM_HEADER_PATTERN.sub(_redact_custom_header_match, value)
     return value
 
 
@@ -188,14 +219,51 @@ _CLI_SECRET_PATTERNS: Sequence[re.Pattern[str]] = (
     # Match a complete shell word, including concatenated quoted/escaped parts.
     re.compile(r"(--server-profiler-start-body(?:\s+|=))" + _SHELL_WORD_PATTERN),
     # Single-quoted: --header 'Authorization:Bearer token' / -H 'X-API-Key:val'
-    re.compile(rf"((?:--header|-H)\s+)'(?i:{_SENSITIVE_HEADER_ALT})[:\s][^']+'"),
+    re.compile(
+        rf"((?:--header|--server-metrics-header|-H)\s+)'"
+        rf"(?i:{_SENSITIVE_HEADER_ALT})[:\s][^']+'"
+    ),
     # Double-quoted: --header "Authorization:Bearer token"
-    re.compile(rf'((?:--header|-H)\s+)"(?i:{_SENSITIVE_HEADER_ALT})[:\s][^"]+"'),
+    re.compile(
+        rf'((?:--header|--server-metrics-header|-H)\s+)"'
+        rf'(?i:{_SENSITIVE_HEADER_ALT})[:\s][^"]+"'
+    ),
     # Unquoted with space-separated value: --header Authorization:Bearer token
-    re.compile(rf"((?:--header|-H)\s+)(?i:{_SENSITIVE_HEADER_ALT})\S*\s+\S+"),
+    re.compile(
+        rf"((?:--header|--server-metrics-header|-H)\s+)"
+        rf"(?i:{_SENSITIVE_HEADER_ALT})\S*\s+\S+"
+    ),
     # Unquoted single-token: --header X-API-Key:value
-    re.compile(rf"((?:--header|-H)\s+)(?i:{_SENSITIVE_HEADER_ALT})\S+"),
+    re.compile(
+        rf"((?:--header|--server-metrics-header|-H)\s+)"
+        rf"(?i:{_SENSITIVE_HEADER_ALT})\S+"
+    ),
 )
+
+_DYNAMIC_CLI_HEADER_PATTERNS: Sequence[re.Pattern[str]] = (
+    re.compile(
+        rf"(?P<prefix>--server-metrics-header[\s=])"
+        rf"(?P<quote>['\"])(?P<name>{_CUSTOM_HEADER_NAME})"
+        rf"(?P<separator>\s*:\s*)(?P<value>.*?)(?P=quote)"
+    ),
+    re.compile(
+        rf"(?P<prefix>--server-metrics-header[\s=])"
+        rf"(?P<name>{_UNQUOTED_HEADER_NAME})(?P<separator>\s*:\s*)"
+        r"(?P<value>[^\s]+)"
+    ),
+)
+
+
+def _redact_dynamic_cli_header(match: re.Match[str]) -> str:
+    if not is_sensitive_header_name(match.group("name")):
+        return match.group(0)
+    groups = match.groupdict()
+    quote = groups.get("quote") or ""
+    return (
+        f"{groups['prefix']}{quote}{groups['name']}{groups['separator']}"
+        f"{REDACTED_VALUE}{quote}"
+    )
+
 
 # URL-typed CLI flags whose values may carry `user:password@` userinfo. Redaction
 # rewrites the *value only* — preserves the flag, surrounding quotes, and any
@@ -316,7 +384,8 @@ def redact_cli_command(cmd: str) -> str:
     Redacts:
     - ``--api-key`` values.
     - The opaque JSON value of ``--server-profiler-start-body``.
-    - Credentialed header values (``--header Authorization: Bearer …`` etc.).
+    - Credentialed header values (``--header Authorization: Bearer …`` and
+      ``--server-metrics-header Authorization: Bearer …``).
     - Userinfo embedded in URL-typed flag values (``--url``, ``-u``,
       ``--otel-url``, ``--mlflow-tracking-uri``).
     - Stray scheme-prefixed URLs with userinfo that slipped past the URL-flag
@@ -328,6 +397,8 @@ def redact_cli_command(cmd: str) -> str:
       tokens on non-URL flags (``--header X-User-Email:alice@example.com``,
       ``--mlflow-tag owner:alice@acme.com``) pass through untouched.
     """
+    for pattern in _DYNAMIC_CLI_HEADER_PATTERNS:
+        cmd = pattern.sub(_redact_dynamic_cli_header, cmd)
     for pattern in _CLI_SECRET_PATTERNS:
         cmd = pattern.sub(rf"\1'{REDACTED_VALUE}'", cmd)
     cmd = _redact_urls_after_multi_value_flags(cmd)
@@ -353,17 +424,31 @@ _CLI_COMMAND_SENSITIVE_TOKENS = (
 
 
 def _redact_cli_args(args: list) -> list:
-    """Redact secret flags and opaque profiler JSON before command assembly."""
+    """Redact secret flags, metrics headers, and opaque profiler JSON before assembly."""
     out: list = []
     redact_next = False
+    in_server_metrics_header_window = False
     for arg in args:
         if redact_next:
             out.append(REDACTED_VALUE)
             redact_next = False
             continue
         if isinstance(arg, str) and arg.startswith("-"):
+            in_server_metrics_header_window = False
             name = arg.lstrip("-").lower()
             key, _, inline = name.partition("=")
+            if key in {"server-metrics-header", "server_metrics_header"}:
+                if inline:
+                    flag = arg.split("=", 1)[0]
+                    out.append(
+                        f"{flag}={_redact_server_metrics_header_value(arg.split('=', 1)[1])}"
+                    )
+                else:
+                    out.append(arg)
+                # consume_multiple=True accepts every following non-option
+                # token as another header value, including after inline use.
+                in_server_metrics_header_window = True
+                continue
             if key == "server-profiler-start-body" or any(
                 tok in key for tok in _CLI_COMMAND_SENSITIVE_TOKENS
             ):
@@ -373,8 +458,36 @@ def _redact_cli_args(args: list) -> list:
                     out.append(arg)
                     redact_next = True
                 continue
+        if in_server_metrics_header_window:
+            out.append(_redact_server_metrics_header_value(arg))
+            continue
         out.append(arg)
     return out
+
+
+def _redact_server_metrics_header_value(value: Any) -> str:
+    text = str(value)
+    if text.lstrip().startswith("{"):
+        try:
+            parsed = orjson.loads(text)
+        except orjson.JSONDecodeError:
+            # Invalid structured input never reaches the request layer. Redact
+            # the complete value because partial parsing cannot prove which
+            # malformed key/value fragments are credentials.
+            return REDACTED_VALUE
+        if isinstance(parsed, dict):
+            redacted = {
+                str(name): REDACTED_VALUE
+                if is_sensitive_header_name(str(name))
+                else header_value
+                for name, header_value in parsed.items()
+            }
+            return orjson.dumps(redacted).decode()
+
+    name, separator, _ = text.partition(":")
+    if separator and is_sensitive_header_name(name.strip()):
+        return f"{name}:{REDACTED_VALUE}"
+    return redact_string(text)
 
 
 def build_cli_command() -> str:
@@ -382,11 +495,9 @@ def build_cli_command() -> str:
 
     Used as `default_factory` for `BenchmarkRun.cli_command` so that runs auto-
     capture the launching command (for reproducibility in
-    `profile_export_aiperf.json`). `_redact_cli_args` handles --api-key-shaped
-    flags token-wise; `redact_cli_command` then catches sensitive
-    --header/-H values (Authorization, X-API-Key, etc.) at the assembled-string
-    level so the canonical cli_command stored in JSON exports is never the
-    source of a credential leak.
+    `profile_export_aiperf.json`). `_redact_cli_args` handles credential flags,
+    metrics headers, and profiler start bodies token-wise. `redact_cli_command`
+    then catches sensitive headers and URLs in the assembled string.
     """
     import sys
 
@@ -556,6 +667,16 @@ def _redact_dataset_paths(benchmark: dict[str, Any]) -> None:
     _redact_dataset_path(benchmark.get("dataset"))
 
 
+def _redact_server_metrics_spec(benchmark: dict[str, Any]) -> None:
+    for key in ("serverMetrics", "server_metrics"):
+        server_metrics = benchmark.get(key)
+        if not isinstance(server_metrics, dict):
+            continue
+        headers = server_metrics.get("headers")
+        if isinstance(headers, dict):
+            server_metrics["headers"] = redact_headers(headers) or {}
+
+
 def redact_endpoint_spec(spec: dict[str, Any]) -> dict[str, Any]:
     """Return a credential-safe copy of a CR spec or benchmark configuration.
 
@@ -571,4 +692,5 @@ def redact_endpoint_spec(spec: dict[str, Any]) -> dict[str, Any]:
         return redacted
     _redact_endpoint_fields(benchmark.get("endpoint"))
     _redact_dataset_paths(benchmark)
+    _redact_server_metrics_spec(benchmark)
     return redacted

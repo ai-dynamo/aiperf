@@ -430,6 +430,7 @@ def _finalized_spec(spec: dict[str, Any]) -> dict[str, Any]:
         validated.benchmark.endpoint,
         validated.pod_template.env,
         datasets=validated.benchmark.datasets,
+        server_metrics=validated.benchmark.server_metrics,
     )
     from aiperf.kubernetes.remote_datasets import report_remote_dataset_checks
 
