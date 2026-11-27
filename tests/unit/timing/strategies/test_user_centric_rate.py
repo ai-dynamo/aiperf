@@ -1,17 +1,27 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from collections.abc import Callable
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 from pytest import param
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common import random_generator as rng
+from aiperf.common.distributions import (
+    LognormalParams,
+    WeibullParams,
+    sample_lognormal,
+    sample_weibull,
+)
+from aiperf.common.enums import CreditPhase, UserCentricGapDistribution
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
 from aiperf.credit.structs import Credit
 from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.conversation_source import ConversationSource
+from aiperf.timing.strategies import user_centric_rate
 from aiperf.timing.strategies.user_centric_rate import User, UserCentricStrategy
 from tests.unit.timing.conftest import OrchestratorHarness, make_sampler
 
@@ -336,6 +346,269 @@ class TestAdaptiveTargetUsers:
             spawn_queue, spawn_sec=10.0, user=MagicMock(max_turns=2)
         )
         assert spawn_queue == []
+
+
+GAP_SAMPLE_COUNT = 20_000
+
+
+def _make_gap_strategy(
+    *,
+    num_users: int = 4,
+    rate: float = 10.0,
+    distribution: UserCentricGapDistribution = UserCentricGapDistribution.FIXED,
+    median: float | None = None,
+) -> UserCentricStrategy:
+    """Build a strategy with a conversation source stub good enough to spawn users."""
+    cfg = CreditPhaseConfig(
+        phase=CreditPhase.PROFILING,
+        timing_mode=TimingMode.USER_CENTRIC_RATE,
+        request_rate=rate,
+        num_users=num_users,
+        total_expected_requests=10,
+        user_centric_gap_distribution=distribution,
+        user_centric_gap_median=median,
+    )
+
+    def _sampled(x_correlation_id: str) -> MagicMock:
+        m = MagicMock()
+        m.x_correlation_id = x_correlation_id
+        return m
+
+    source = MagicMock()
+    source.next.side_effect = _sampled
+    strategy = UserCentricStrategy(
+        config=cfg,
+        conversation_source=source,
+        scheduler=MagicMock(),
+        stop_checker=MagicMock(),
+        credit_issuer=MagicMock(),
+        lifecycle=MagicMock(),
+    )
+    strategy._recompute_turn_gap(num_users)
+    return strategy
+
+
+def _draw_gaps(strategy: UserCentricStrategy, count: int) -> np.ndarray:
+    user = strategy._generate_next_user(max_turns=5)
+    return np.array([strategy._next_turn_gap(user) for _ in range(count)])
+
+
+class TestGapDistributionSampling:
+    def test_fixed_gap_is_constant_and_skips_rng(self) -> None:
+        strategy = _make_gap_strategy()
+        user = strategy._generate_next_user(max_turns=5)
+        assert user.gap_rng is None
+        gaps = [strategy._next_turn_gap(user) for _ in range(10)]
+        assert gaps == [pytest.approx(0.4)] * 10
+
+    @pytest.mark.parametrize(
+        "distribution",
+        [
+            param(UserCentricGapDistribution.LOGNORMAL, id="lognormal"),
+            param(UserCentricGapDistribution.WEIBULL, id="weibull"),
+        ],
+    )  # fmt: skip
+    def test_sampled_gaps_vary_per_turn(
+        self, distribution: UserCentricGapDistribution
+    ) -> None:
+        strategy = _make_gap_strategy(distribution=distribution, median=0.2)
+        gaps = _draw_gaps(strategy, 100)
+        assert len(np.unique(gaps)) > 90
+        assert (gaps > 0).all()
+
+    @pytest.mark.parametrize(
+        "distribution",
+        [
+            param(UserCentricGapDistribution.LOGNORMAL, id="lognormal"),
+            param(UserCentricGapDistribution.WEIBULL, id="weibull"),
+        ],
+    )  # fmt: skip
+    def test_sampled_gap_mean_pinned_to_num_users_over_rate(
+        self, distribution: UserCentricGapDistribution
+    ) -> None:
+        # mean gap = num_users / rate = 4 / 10.0 = 0.4s.
+        strategy = _make_gap_strategy(distribution=distribution, median=0.2)
+        gaps = _draw_gaps(strategy, GAP_SAMPLE_COUNT)
+        assert float(np.mean(gaps)) == pytest.approx(0.4, rel=0.05)
+
+    @pytest.mark.parametrize(
+        "distribution",
+        [
+            param(UserCentricGapDistribution.LOGNORMAL, id="lognormal"),
+            param(UserCentricGapDistribution.WEIBULL, id="weibull"),
+        ],
+    )  # fmt: skip
+    def test_sampled_gap_median_matches_configured_median(
+        self, distribution: UserCentricGapDistribution
+    ) -> None:
+        strategy = _make_gap_strategy(distribution=distribution, median=0.2)
+        gaps = _draw_gaps(strategy, GAP_SAMPLE_COUNT)
+        assert float(np.median(gaps)) == pytest.approx(0.2, rel=0.05)
+
+    def test_gap_stream_deterministic_per_user_under_fixed_seed(self) -> None:
+        first = _draw_gaps(
+            _make_gap_strategy(
+                distribution=UserCentricGapDistribution.WEIBULL, median=0.2
+            ),
+            10,
+        )
+        second = _draw_gaps(
+            _make_gap_strategy(
+                distribution=UserCentricGapDistribution.WEIBULL, median=0.2
+            ),
+            10,
+        )
+        assert first.tolist() == second.tolist()
+
+    def test_gap_streams_differ_between_users(self) -> None:
+        strategy = _make_gap_strategy(
+            distribution=UserCentricGapDistribution.LOGNORMAL, median=0.2
+        )
+        user_1 = strategy._generate_next_user(max_turns=5)
+        user_2 = strategy._generate_next_user(max_turns=5)
+        gaps_1 = [strategy._next_turn_gap(user_1) for _ in range(5)]
+        gaps_2 = [strategy._next_turn_gap(user_2) for _ in range(5)]
+        assert gaps_1 != gaps_2
+
+    def test_missing_median_for_sampled_distribution_raises(self) -> None:
+        with pytest.raises(ValueError, match="user_centric_gap_median"):
+            _make_gap_strategy(distribution=UserCentricGapDistribution.LOGNORMAL)
+
+    def test_adaptive_rescale_below_median_raises_with_computed_mean(self) -> None:
+        strategy = _make_gap_strategy(
+            distribution=UserCentricGapDistribution.WEIBULL, median=0.3
+        )
+        # set_target_users(2) shrinks the mean gap to 2 / 10.0 = 0.2s < median.
+        with pytest.raises(ValueError, match=r"0\.2"):
+            strategy.set_target_users(2)
+
+    def test_failed_rescale_retains_consistent_turn_gap_and_params(self) -> None:
+        strategy = _make_gap_strategy(
+            distribution=UserCentricGapDistribution.WEIBULL, median=0.3
+        )
+        old_gap = strategy._turn_gap
+        old_params = strategy._gap_params
+        old_users = (strategy._target_num_users, strategy._num_users)
+        old_adaptive = strategy._adaptive_target_enabled
+        old_snapshot = strategy.user_control_snapshot()
+
+        with pytest.raises(ValueError):
+            strategy.set_target_users(2)
+
+        # A rejected rescale must not leave _turn_gap and _gap_params describing
+        # different distributions (params pinned to the old mean, gap to the new).
+        assert strategy._turn_gap == old_gap
+        assert strategy._gap_params is old_params
+        assert strategy._gap_params.mean == strategy._turn_gap
+        # Nor may it commit the rejected target: the user counts, the adaptive
+        # flag and the reported snapshot must all still describe the old state.
+        assert (strategy._target_num_users, strategy._num_users) == old_users
+        assert strategy._adaptive_target_enabled is old_adaptive
+        assert strategy.user_control_snapshot() == old_snapshot
+
+    def test_adaptive_rescale_repins_sampled_mean(self) -> None:
+        strategy = _make_gap_strategy(
+            distribution=UserCentricGapDistribution.LOGNORMAL, median=0.2
+        )
+        strategy._spawn_queue = []
+        # set_target_users(8) grows the mean gap to 8 / 10.0 = 0.8s.
+        strategy.set_target_users(8)
+        gaps = _draw_gaps(strategy, GAP_SAMPLE_COUNT)
+        assert float(np.mean(gaps)) == pytest.approx(0.8, rel=0.05)
+
+
+GAP_SCHEDULING_TURNS = 8
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "distribution",
+    [
+        param(UserCentricGapDistribution.LOGNORMAL, id="lognormal"),
+        param(UserCentricGapDistribution.WEIBULL, id="weibull"),
+    ],
+)  # fmt: skip
+async def test_handle_credit_return_schedules_continuations_at_sampled_gaps(
+    distribution: UserCentricGapDistribution, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scheduled continuation times must advance by the sampled gaps.
+
+    Observes the scheduler, not the sampler: replacing the per-user draw with
+    the constant mean gap in handle_credit_return must fail this test. The
+    expected gaps are redrawn independently from the same derived per-user
+    seed through the public samplers, and the clock is frozen behind every
+    send so the max(now, ...) clamp never engages.
+    """
+    mean_gap, median = 1.0, 0.5
+    scheduler = MagicMock()
+    issuer = MagicMock()
+    issuer.issue_credit = lambda *a, **k: True
+    ds = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="c1",
+                turns=[
+                    TurnMetadata(delay_ms=None) for _ in range(GAP_SCHEDULING_TURNS)
+                ],
+            )
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    strategy = UserCentricStrategy(
+        config=CreditPhaseConfig(
+            phase=CreditPhase.PROFILING,
+            timing_mode=TimingMode.USER_CENTRIC_RATE,
+            request_rate=1.0 / mean_gap,
+            num_users=1,
+            total_expected_requests=GAP_SCHEDULING_TURNS,
+            user_centric_gap_distribution=distribution,
+            user_centric_gap_median=median,
+        ),
+        conversation_source=ConversationSource(
+            ds, make_sampler(["c1"], DatasetSamplingStrategy.SEQUENTIAL)
+        ),
+        scheduler=scheduler,
+        stop_checker=MagicMock(),
+        credit_issuer=issuer,
+        lifecycle=MagicMock(),
+    )
+    await strategy.setup_phase()
+    x_correlation_id, user = next(iter(strategy._session_to_user.items()))
+    start = 1000.0
+    user.next_send_time = start
+    monkeypatch.setattr(
+        user_centric_rate, "time", SimpleNamespace(perf_counter=lambda: 0.0)
+    )
+
+    for turn_index in range(GAP_SCHEDULING_TURNS - 1):
+        await strategy.handle_credit_return(
+            Credit(
+                id=turn_index,
+                phase=CreditPhase.PROFILING,
+                conversation_id="c1",
+                x_correlation_id=x_correlation_id,
+                turn_index=turn_index,
+                num_turns=GAP_SCHEDULING_TURNS,
+                issued_at_ns=1000,
+            )
+        )
+
+    scheduled = [c.args[0] for c in scheduler.schedule_at_perf_sec.call_args_list]
+    observed = np.diff([start, *scheduled])
+
+    gen = rng.derive(
+        f"timing.user_centric_rate.turn_gap.user.{user.user_id}"
+    ).numpy_generator
+    if distribution == UserCentricGapDistribution.WEIBULL:
+        params = WeibullParams(distribution="weibull", mean=mean_gap, median=median)
+        expected = [float(sample_weibull(params, gen, size=1)[0]) for _ in observed]
+    else:
+        params = LognormalParams(mean=mean_gap, median=median)
+        expected = [float(sample_lognormal(params, gen, size=1)[0]) for _ in observed]
+
+    assert len(observed) == GAP_SCHEDULING_TURNS - 1
+    assert observed.tolist() == pytest.approx(expected, rel=1e-9)
+    assert not np.allclose(observed, mean_gap)
 
 
 class TestUserClass:

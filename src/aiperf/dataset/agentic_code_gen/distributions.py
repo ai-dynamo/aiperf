@@ -10,7 +10,22 @@ import math
 import numpy as np
 from numpy.random import Generator
 
-from aiperf.dataset.agentic_code_gen.models import LognormalParams, MixtureDelayConfig
+from aiperf.common.distributions import (
+    LognormalParams,
+    WeibullParams,
+    sample_lognormal,
+    sample_weibull,
+)
+from aiperf.dataset.agentic_code_gen.models import MixtureDelayConfig
+
+__all__ = [
+    "fit_from_samples",
+    "lognormal_from_mean_median",
+    "sample_delay_component",
+    "sample_lognormal",
+    "sample_mixture_delay",
+    "sample_weibull",
+]
 
 
 def lognormal_from_mean_median(mean: float, median: float) -> LognormalParams:
@@ -50,41 +65,13 @@ def fit_from_samples(samples: np.ndarray) -> LognormalParams:
     return LognormalParams(mu=mu, sigma=sigma, mean=real_mean, median=real_median)
 
 
-def sample_lognormal(
-    params: LognormalParams,
-    rng: Generator,
-    *,
-    size: int = 1,
-    clip_min: float | None = None,
-    max_attempts: int = 100,
+def sample_delay_component(
+    params: LognormalParams | WeibullParams, rng: Generator, *, size: int = 1
 ) -> np.ndarray:
-    """Draw samples from a lognormal distribution.
-
-    Uses rejection sampling for params.min and params.max (resample out-of-range
-    values). clip_min is a hard floor applied after rejection sampling.
-    """
-    lo = params.min
-    hi = params.max
-    samples = rng.lognormal(mean=params.mu, sigma=params.sigma, size=size)
-    if lo is not None or hi is not None:
-        for _ in range(max_attempts):
-            mask = np.zeros(len(samples), dtype=bool)
-            if lo is not None:
-                mask |= samples < lo
-            if hi is not None:
-                mask |= samples > hi
-            if not mask.any():
-                break
-            samples[mask] = rng.lognormal(
-                mean=params.mu, sigma=params.sigma, size=int(mask.sum())
-            )
-        if lo is not None:
-            samples = np.maximum(samples, lo)
-        if hi is not None:
-            samples = np.minimum(samples, hi)
-    if clip_min is not None:
-        samples = np.maximum(samples, clip_min)
-    return samples
+    """Sample a mixture delay component using its own distribution family."""
+    if isinstance(params, WeibullParams):
+        return sample_weibull(params, rng, size=size)
+    return sample_lognormal(params, rng, size=size)
 
 
 def sample_mixture_delay(
@@ -93,11 +80,11 @@ def sample_mixture_delay(
     """Sample from the two-component mixture delay model.
 
     For each sample, a Bernoulli draw selects agentic (fast) vs human (slow),
-    then the corresponding lognormal is sampled.
+    then the corresponding component distribution is sampled.
     """
     is_agentic = rng.random(size=size) < config.agentic_fraction
-    agentic_samples = sample_lognormal(config.agentic_delay, rng, size=size)
-    human_samples = sample_lognormal(config.human_delay, rng, size=size)
+    agentic_samples = sample_delay_component(config.agentic_delay, rng, size=size)
+    human_samples = sample_delay_component(config.human_delay, rng, size=size)
     samples = np.where(is_agentic, agentic_samples, human_samples)
     if config.max is not None:
         samples = np.minimum(samples, config.max)

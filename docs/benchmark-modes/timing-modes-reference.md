@@ -16,7 +16,7 @@ AIPerf determines how to schedule requests based on which CLI options you specif
 | `--request-rate` | Rate-based load testing | Schedule requests at a target QPS with configurable arrival patterns |
 | `--concurrency` (alone) | Saturation/throughput testing | Send requests as fast as possible within concurrency limits |
 | `--fixed-schedule` | Trace replay | Replay requests at exact timestamps from dataset |
-| `--user-centric-rate` | KV cache benchmarking | Per-user rate limiting with consistent turn gaps |
+| `--user-centric-rate` | KV cache benchmarking | Per-user rate limiting with a fixed turn gap of `num_users / rate` seconds by default; `--user-centric-gap-distribution lognormal\|weibull` samples each turn gap instead, with the sampled *distribution's* mean pinned to the user target over the rate — `num_users / rate`, or `adaptive_scale.control.min / rate` when adaptive scaling of `users` starts the run below the configured maximum — and `--user-centric-gap-median` controlling skew. Pinning the distribution mean does **not** preserve the realized request rate — see [Sampled turn gaps lower the realized request rate](#sampled-turn-gaps-lower-the-realized-request-rate) |
 
 ### Option Priority
 
@@ -76,6 +76,8 @@ If measured QPS is consistently lower than `--request-rate`:
 | `--user-centric-rate` | ❌ | ❌ | 🔧 | Requires `--num-users` |
 | `--fixed-schedule` | ❌ | 🔧 | ❌ | Requires trace dataset with timestamps |
 | `--num-users` | ❌ | ❌ | 🔧 | Required with `--user-centric-rate`; **raises error** otherwise |
+| `--user-centric-gap-distribution` | ❌ | ❌ | ✅ | `fixed` (default), `lognormal`, or `weibull`; **raises error** without `--user-centric-rate`. `lognormal`/`weibull` [lower the realized request rate](#sampled-turn-gaps-lower-the-realized-request-rate) |
+| `--user-centric-gap-median` | ❌ | ❌ | ⚠️ | Required for `lognormal`/`weibull` gap distributions; **raises error** with `fixed` or without `--user-centric-rate` |
 | `--request-rate-ramp-duration` | ✅ | ❌ | ❌ | **Raises error** with `--fixed-schedule` or `--user-centric-rate` |
 
 ### Stop Conditions (at least one required)
@@ -249,7 +251,7 @@ Time window filtering is rejected at load time when the trace contains [`"assist
 
 ### Using `--user-centric-rate` (KV Cache Benchmarking)
 
-Per-user rate limiting for KV cache benchmarking. Each user has a consistent gap between their turns.
+Per-user rate limiting for KV cache benchmarking. By default each user has a constant gap between their turns; `--user-centric-gap-distribution lognormal|weibull` samples the gap instead.
 
 ```bash
 # 15 users at 1 QPS total (basic example)
@@ -264,6 +266,59 @@ aiperf profile --url localhost:8000 --model llama \
 **Key formula:** `turn_gap = num_users / user_centric_rate`
 
 With `--num-users 15` and `--user-centric-rate 1.0`, each user has 15 seconds between their turns.
+
+#### Sampling turn gaps with `--user-centric-gap-distribution`
+
+`--user-centric-gap-distribution lognormal|weibull` replaces the constant gap with a per-turn draw from a right-skewed distribution. `--user-centric-gap-median` is required and sets the skew: it must be strictly between 0 and the mean gap, and the further below the mean it sits, the heavier the tail. The mean gap it is checked against is the **smallest the run reaches**, not the one implied by the maximum user count: with `adaptive_scale.control.variable: users` the run starts at `control.min`, so the bound is `0 < median < control.min / rate` rather than `0 < median < num_users / rate`.
+
+```bash
+aiperf profile --url localhost:8000 --model llama \
+    --user-centric-rate 1.0 \
+    --num-users 15 \
+    --user-centric-gap-distribution lognormal \
+    --user-centric-gap-median 8 \
+    --session-turns-mean 20 \
+    --streaming \
+    --benchmark-duration 300
+```
+
+#### Sampled turn gaps lower the realized request rate
+
+**Pinning the sampled distribution's mean to `num_users / rate` does not preserve the realized aggregate request rate.** The mean of the *distribution you draw from* is `num_users / rate`; the *measured* request rate is lower, and within one distribution family it drops further as the median falls. This is expected scheduler behavior, **not a server regression** — do not read a throughput difference between `fixed` and `lognormal`/`weibull` as a server or model problem.
+
+Measured with identical settings and seed, target 4 req/s over 45 s:
+
+| `--user-centric-gap-distribution` | `--user-centric-gap-median` | Realized rate | vs. 4 req/s target | vs. `fixed` |
+|---|---|---|---|---|
+| `fixed` | — | 3.38 req/s | -16% | baseline |
+| `lognormal` | 1.8 | 2.99 req/s | -25% | -12% |
+| `weibull` | 0.5 | 2.06 req/s | -49% | -39% |
+| `lognormal` | 0.5 | 1.62 req/s | -60% | **-52%** |
+
+Two mechanisms produce the shortfall:
+
+1. **The send-time clamp only ever delays scheduled sends.** The scheduler advances a user with `next_send = max(now, previous_send + gap)`, where `previous_send` is the previous *scheduled* time, so the scheduled inter-send interval is `max(service_time, gap)`. (A send that issues late shortens the realized interval to the next one, since that one is scheduled from the earlier target; the guarantee is about scheduled times.) That expression can stretch a short gap out to the response time but can never claw back time lost on a long one. Because `max(·, service_time)` is convex in `gap`, a random gap yields a mean interval at least as large as a constant gap of the same mean, and strictly larger when draws fall on **both** sides of the service time — so the realized rate falls. Within one family at a fixed mean, the shortfall grows as the median drops (lognormal and Weibull are each convex-ordered by their shape parameter). Across families the median does not order it: at mean gap 1 s and service time 0.1 s, an exponential gap (Weibull shape 1, median 0.69 s) gives an expected interval of 1.0048 s, but a lognormal with median 0.5 s gives 1.0031 s. (The inequality is not strict at the extremes: if every draw is below the service time, `max(service_time, gap)` is the constant `service_time` and the sampled and fixed arms are equal.) This clamp is pre-existing behavior and is why even `fixed` measures below target (3.38 vs 4.0 above) once responses run longer than their scheduled gaps — a response shorter than its gap costs nothing (`max(0.5, 1) = 1`); what the sampled distributions add is the dependence on distribution *shape*.
+2. **Spawn cadence still uses the mean gap.** New users are spawned on a schedule computed from `max_turns * mean_gap`, while a heavy-tailed draw can park an existing user's slot for far longer than the mean. Without adaptive user control, spawns do not wait for occupied user slots to free, so earlier spawns do not compensate for idle slots. With adaptive user control, spawns are gated on the active-user count.
+
+The samplers themselves are correct — 200k draws reproduce the configured mean and median to three digits. The gap is entirely between the sampled distribution and what the scheduler can realize.
+
+Both columns matter: `fixed` already runs 16% under a 4 req/s target here because of mechanism 1, and switching to a strongly skewed sampled gap costs a further 52% on top of that.
+
+#### What this option can and cannot measure
+
+Read this before designing a comparison — the limitation is structural, not a tuning problem.
+
+**It can** answer *"how does the system behave when users are bursty rather than metronomic?"* The gap draws are correct, the skew control is real, and the resulting arrival process is a plausible model of human think time.
+
+**It cannot** answer *"what is the effect of burstiness, holding offered load constant?"* Pinning `E[gap]` across arms does not pin delivered load, so an A/B between `fixed` and `lognormal`/`weibull` **confounds gap shape with offered load** — the sampled arm is also a lower-throughput arm, by up to 52% in the table above. There is no setting of `--user-centric-gap-median` that removes this: matching the mean is precisely the thing that does not work, because `max(·, service_time)` is convex and Jensen's inequality does the rest.
+
+Practical consequences:
+
+- **Do not attribute a latency or hit-rate difference between arms to burstiness alone.** Report the realized rate per arm; if it differs, the arms are not load-matched and the comparison cannot separate the two causes.
+- **A fixed-shape comparison removes the shape confound, not the load one.** At one distribution family *and* one median-to-mean ratio every arm draws gaps of the same *normalized* shape — not the same gaps: 15 users at rate 1 with median 8 and 15 users at rate 2 with median 4 share a ratio but have mean gaps of 15 s and 7.5 s. Even when the gaps are identical, the realized interval is `E[max(S, G)]`, which depends on the whole service-time distribution `S`, not just its mean: with exponential gaps of mean 1 s, a constant 1 s service time gives 1.37 s, while service times split evenly between 0 s and 2 s (same mean) give 1.57 s. Anything that changes latency between arms can therefore change load too. Measure the realized rate of every arm, and call the comparison load-matched only when those rates agree. **A median sweep is not this case:** varying `--user-centric-gap-median` changes the shape *and* the realized load together (2.99 → 1.62 req/s across the medians in the table above), so it is a deliberate shape sweep whose realized rate must be reported per arm, not a controlled comparison.
+- **If you need load-matched shape comparisons**, this mode cannot currently provide them. `--request-rate` (with `--arrival-pattern poisson|gamma`) schedules against an absolute timeline rather than per-user gaps, so it does not accumulate this shortfall — but it targets a rate rather than guaranteeing one, and can still under-deliver when pacing resolution or a concurrency limit intervenes. Compare the realized QPS reported by the run, not the requested value. It also has no per-user turn-gap concept, so it is a different experiment rather than a substitute. Note that the high-resolution pacing added for `--request-rate` does not apply to this mode.
+
+The clean fix is a pacing-semantics change — applying the gap as think time *after* the response completes (`next_send = response_end + gap`, cycle `S + G`) rather than as an offset from the previous send (cycle `max(S, G)`). `E[S + G]` is shape-independent, so mean-pinning would genuinely hold offered load and fixed-vs-sampled would be comparable by construction. It still depends on `E[S]`, so across systems with different service-time means it would not by itself match load either. That is deliberately **not** part of this change: it alters `--user-centric-rate` semantics for every existing user, and open-loop `max(now, …)` pacing is a defensible choice for a *rate* mode, which drops debt rather than catching up. The concept already exists elsewhere in the codebase — `use_think_time_only` in the trace-replay loader — but is not reachable from this mode.
 
 > **For complete KV cache benchmarking**, also configure shared system prompts and user context prompts. See the [User-Centric Timing Tutorial](../tutorials/user-centric-timing.md) for full configuration including `--shared-system-prompt-length`, `--user-context-prompt-length`, and other prompt options.
 
@@ -325,6 +380,8 @@ With `--num-users 15` and `--user-centric-rate 1.0`, each user has 15 seconds be
 | `--user-centric-rate` | float | None | Per-user QPS; enables turn-gap scheduling (requires `--num-users`) |
 | `--fixed-schedule` | bool | false | Enable timestamp-based scheduling from dataset |
 | `--num-users` | int | None | Concurrent users (required with `--user-centric-rate`) |
+| `--user-centric-gap-distribution` | enum | fixed | Per-user turn-gap distribution: `fixed`, `lognormal`, `weibull`. The sampled distribution's mean is pinned to the user target over the rate (`num_users / rate`, or `adaptive_scale.control.min / rate` under adaptive `users`), but the realized aggregate rate is **not** preserved; within one family it falls as the median drops (measured up to -52% vs `fixed`) — see [Sampled turn gaps lower the realized request rate](#sampled-turn-gaps-lower-the-realized-request-rate) |
+| `--user-centric-gap-median` | float | None | Median of the sampled turn gap in seconds; required for `lognormal`/`weibull`, must be `0 < median < num_users / rate` — or `0 < median < adaptive_scale.control.min / rate` under adaptive scaling of `users`, since that is the smallest mean gap the run reaches. Lower median = stronger skew = lower realized rate |
 | `--arrival-pattern` | enum | poisson | Request arrival distribution: `constant`, `poisson`, `gamma` (only with `--request-rate`) |
 | `--arrival-smoothness` | float | 1.0 | Gamma distribution shape (only with `--arrival-pattern gamma`) |
 | `--request-rate-ramp-duration` | float | None | Seconds to ramp request rate from proportional minimum to target (only with `--request-rate`) |
