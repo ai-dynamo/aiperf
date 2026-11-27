@@ -130,6 +130,28 @@ def _warmup_ramps(w: dict[str, Any], cli: CLIConfig, s: set[str]) -> None:
         w["rate_ramp"] = {"duration": rr}
 
 
+def _warmup_concurrency_caps(
+    w: dict[str, Any], cli: CLIConfig, s: set[str], *, base_warmup: bool
+) -> None:
+    if "warmup_request_concurrency" in s:
+        w["request_concurrency"] = cli.warmup_request_concurrency
+    elif not base_warmup and "request_concurrency" in s:
+        # --request-concurrency targets profiling. Under a YAML-declared warmup
+        # the phase's own cap must survive the override.
+        w["request_concurrency"] = cli.request_concurrency
+    if "warmup_prefill_concurrency" in s:
+        w["prefill_concurrency"] = cli.warmup_prefill_concurrency
+    elif "prefill_concurrency" in s:
+        # The mirrored profiling prefill cap must not exceed the warmup's own
+        # request cap, or the synthesized phase fails validation for flags the
+        # user never paired.
+        prefill = cli.prefill_concurrency
+        request_cap = w.get("request_concurrency")
+        if prefill is not None and request_cap is not None:
+            prefill = min(prefill, request_cap)
+        w["prefill_concurrency"] = prefill
+
+
 def build_warmup(cli: CLIConfig, *, base_warmup: bool = False) -> dict[str, Any] | None:
     """Build a warmup phase dict from CLIConfig, or return None.
 
@@ -180,10 +202,7 @@ def build_warmup(cli: CLIConfig, *, base_warmup: bool = False) -> dict[str, Any]
         _warmup_pattern_type(w, cli, s)
     _warmup_ramps(w, cli, s)
     _apply_agentic_replay_fields(w, cli)
-    if "warmup_prefill_concurrency" in s:
-        w["prefill_concurrency"] = cli.warmup_prefill_concurrency
-    elif "prefill_concurrency" in s:
-        w["prefill_concurrency"] = cli.prefill_concurrency
+    _warmup_concurrency_caps(w, cli, s, base_warmup=base_warmup)
     if cli.warmup_grace_period is not None:
         # grace_period is a duration-phase concept (a tail on top of ``duration``);
         # PhaseConfig rejects it without ``duration`` set. Raise a targeted error

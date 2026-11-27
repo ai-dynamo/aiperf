@@ -321,6 +321,22 @@ class TestGlobalPhaseConcurrencyLimiter:
         assert await lim.acquire(P, lambda: True) is True
 
     @pytest.mark.asyncio
+    async def test_acquire_cancelled_while_waiting_on_phase_returns_global_permit(
+        self,
+    ) -> None:
+        lim = GlobalPhaseConcurrencyLimiter()
+        lim.configure_for_phase(P, 1)
+        lim.configure_for_phase(W, 3)
+        assert await lim.acquire(P, lambda: True)
+
+        waiter = asyncio.create_task(lim.acquire(P, lambda: True))
+        await asyncio.sleep(0)
+        await _cancel(waiter)
+
+        assert lim.try_acquire(W, lambda: True)
+        assert lim.try_acquire(W, lambda: True)
+
+    @pytest.mark.asyncio
     async def test_held_slots_tracking(self) -> None:
         lim = GlobalPhaseConcurrencyLimiter()
         lim.configure_for_phase(P, 10)
@@ -434,17 +450,19 @@ class TestConcurrencyManager:
     @pytest.mark.asyncio
     async def test_release_stuck_slots_returns_counts(self) -> None:
         m = ConcurrencyManager()
-        m.configure_for_phase(P, 10, 5)
+        m.configure_for_phase(P, 10, 5, 10)
         for _ in range(3):
             await m.acquire_session_slot(P, lambda: True)
         for _ in range(2):
             await m.acquire_prefill_slot(P, lambda: True)
-        assert m.release_stuck_slots(P) == (3, 2)
+        for _ in range(4):
+            await m.acquire_request_slot(P, lambda: True)
+        assert m.release_stuck_slots(P) == (3, 2, 4)
 
     def test_release_stuck_slots_disabled_returns_zero(self) -> None:
         m = ConcurrencyManager()
         m.configure_for_phase(P, None, None)
-        assert m.release_stuck_slots(P) == (0, 0)
+        assert m.release_stuck_slots(P) == (0, 0, 0)
 
     def test_get_session_stats_disabled_returns_none(self) -> None:
         m = ConcurrencyManager()
@@ -487,6 +505,103 @@ class TestConcurrencyManager:
         m = ConcurrencyManager()
         m.configure_for_phase(P, None, None)
         m.set_prefill_limit(P, 10)
+
+    @pytest.mark.asyncio
+    async def test_release_request_slot_after_unlimited_phase_frees_permit(
+        self,
+    ) -> None:
+        m = ConcurrencyManager()
+        m.configure_for_phase(0, None, None, 1)
+        assert await m.acquire_request_slot(0, lambda: True)
+        m.configure_for_phase(1, None, None, None)
+        m.release_request_slot(0)
+        m.configure_for_phase(2, None, None, 1)
+        assert await asyncio.wait_for(
+            m.acquire_request_slot(2, lambda: True), timeout=0.5
+        )
+
+    @pytest.mark.asyncio
+    async def test_request_slot_third_acquire_blocks_until_release(self) -> None:
+        m = ConcurrencyManager()
+        m.configure_for_phase(P, None, None, 2)
+        assert await m.acquire_request_slot(P, lambda: True)
+        assert await m.acquire_request_slot(P, lambda: True)
+        blocked = asyncio.create_task(m.acquire_request_slot(P, lambda: True))
+        await asyncio.sleep(0)
+        assert not blocked.done()
+        m.release_request_slot(P)
+        assert await asyncio.wait_for(blocked, timeout=0.5) is True
+
+    @pytest.mark.asyncio
+    async def test_late_request_release_after_stuck_release_keeps_cap(self) -> None:
+        m = ConcurrencyManager()
+        m.configure_for_phase(0, None, None, 1)
+        assert await m.acquire_request_slot(0, lambda: True)
+        assert m.release_stuck_slots(0) == (0, 0, 1)
+        m.release_request_slot(0)
+        assert m.try_acquire_request_slot(0, lambda: True) is True
+        assert m.try_acquire_request_slot(0, lambda: True) is False
+
+    @pytest.mark.asyncio
+    async def test_uncapped_phase_request_slot_does_not_consume_capped_phase(
+        self,
+    ) -> None:
+        m = ConcurrencyManager()
+        m.configure_for_phase(W, None, None, None)
+        m.configure_for_phase(P, None, None, 1)
+        assert m.request_slot_available(W) is True
+        assert m.try_acquire_request_slot(W, lambda: True) is True
+        assert await m.acquire_request_slot(W, lambda: True) is True
+        assert m.try_acquire_request_slot(P, lambda: True) is True
+        assert m.try_acquire_request_slot(P, lambda: True) is False
+        assert m.request_slot_available(P) is False
+
+    @pytest.mark.asyncio
+    async def test_uncapped_phase_request_acquire_does_not_block_on_capped_phase(
+        self,
+    ) -> None:
+        m = ConcurrencyManager()
+        m.configure_for_phase(W, None, None, None)
+        m.configure_for_phase(P, None, None, 1)
+        assert await m.acquire_request_slot(P, lambda: True)
+        assert await asyncio.wait_for(
+            m.acquire_request_slot(W, lambda: True), timeout=0.5
+        )
+
+    @pytest.mark.asyncio
+    async def test_uncapped_phase_request_acquire_respects_can_proceed(self) -> None:
+        m = ConcurrencyManager()
+        m.configure_for_phase(W, None, None, None)
+        m.configure_for_phase(P, None, None, 1)
+        assert await m.acquire_request_slot(W, lambda: False) is False
+        assert m.try_acquire_request_slot(W, lambda: False) is False
+
+    @pytest.mark.asyncio
+    async def test_capped_phase_stays_limited_after_uncapped_successor(self) -> None:
+        m = ConcurrencyManager()
+        m.configure_for_phase(P, None, None, 1)
+        assert await m.acquire_request_slot(P, lambda: True)
+        m.configure_for_phase(W, None, None, None)
+        assert m.request_slot_available(P) is False
+        assert m.try_acquire_request_slot(P, lambda: True) is False
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(m.acquire_request_slot(P, lambda: True), 0.05)
+        m.release_request_slot(P)
+        assert await asyncio.wait_for(m.acquire_request_slot(P, lambda: True), 0.5)
+
+    @pytest.mark.asyncio
+    async def test_uncapped_successor_acquires_freely_without_touching_capped_permits(
+        self,
+    ) -> None:
+        m = ConcurrencyManager()
+        m.configure_for_phase(P, None, None, 1)
+        assert await m.acquire_request_slot(P, lambda: True)
+        m.configure_for_phase(W, None, None, None)
+        assert m.request_slot_available(W) is True
+        assert await asyncio.wait_for(m.acquire_request_slot(W, lambda: True), 0.5)
+        assert m.try_acquire_request_slot(W, lambda: True) is True
+        assert m._request_limiter.get_held_slots(P) == 1
+        assert m._request_limiter.get_held_slots(W) == 0
 
 
 class TestConcurrencyStats:

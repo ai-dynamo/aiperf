@@ -77,6 +77,8 @@ This means:
 - But only 5 can be reading their prompts (prefilling) at the same time
 - The other 45 are either waiting to prefill OR already generating responses
 
+A third limit, **`--request-concurrency`**, caps every wire request (roots and sub-agent forks) from dispatch until its response returns. Prefill concurrency releases its slot at first token, so decoding requests do not count against it; request concurrency keeps them counted. Use it to bound total in-flight requests when sub-agent fan-out would oversubscribe `--concurrency`. `--prefill-concurrency` must be ≤ `--request-concurrency`. See [Request Concurrency](../benchmark-modes/timing-modes-reference.md#request-concurrency) for how it differs from `--concurrency`.
+
 ## Examples
 
 ### Controlling Prefill Queue Depth
@@ -241,6 +243,7 @@ Requests arrive at 10 QPS, up to 100 can be active, but only 10 can prefill at o
 | `--prefill-concurrency-ramp-duration` | float | None | Seconds to ramp from 1 to target |
 | `--warmup-prefill-concurrency` | int | None | Prefill limit during warmup (falls back to main) |
 | `--warmup-prefill-concurrency-ramp-duration` | float | None | Warmup prefill ramp duration |
+| `--request-concurrency` | int | None | Max total in-flight requests, roots and sub-agent forks, until each response returns |
 
 **Constraints:**
 - `--prefill-concurrency` must be ≤ `--concurrency` (if both set)

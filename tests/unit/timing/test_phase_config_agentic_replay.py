@@ -4,6 +4,7 @@
 
 import pydantic
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CreditPhase
 from aiperf.config.phases import BasePhaseConfig, PhaseConfig
@@ -49,6 +50,69 @@ def test_profiling_config_propagates_cap() -> None:
     )
     assert profiling.timing_mode == TimingMode.AGENTIC_REPLAY
     assert profiling.phase == CreditPhase.PROFILING
+
+
+def test_warmup_request_concurrency_falls_back_to_profiling() -> None:
+    """Without a warmup-specific value, the warmup inherits the profiling request cap."""
+    phase = _PHASE_ADAPTER.validate_python(
+        {
+            "name": "profiling",
+            "type": "concurrency",
+            "concurrency": 64,
+            "request_concurrency": 32,
+            "duration": 900,
+            "timing_mode": TimingMode.AGENTIC_REPLAY,
+        }
+    )
+    warmup = _build_agentic_warmup_config(phase)
+    assert warmup is not None
+    assert warmup.request_concurrency == 32
+
+
+def test_warmup_request_concurrency_overrides_profiling() -> None:
+    """A warmup-specific cap throttles priming without shrinking the burst size."""
+    phase = _PHASE_ADAPTER.validate_python(
+        {
+            "name": "profiling",
+            "type": "concurrency",
+            "concurrency": 64,
+            "request_concurrency": 32,
+            "agentic_warmup_request_concurrency": 8,
+            "duration": 900,
+            "timing_mode": TimingMode.AGENTIC_REPLAY,
+        }
+    )
+    warmup = _build_agentic_warmup_config(phase)
+    assert warmup is not None
+    assert warmup.request_concurrency == 8
+    # Every profiling lane is still primed, so the burst tracks profiling concurrency.
+    assert warmup.total_expected_requests == 64
+
+
+@pytest.mark.parametrize(
+    "prefill,expected_prefill",
+    [param(32, 8, id="clamped-to-warmup-request-cap"), param(4, 4, id="under-cap-kept")],
+)  # fmt: skip
+def test_warmup_prefill_concurrency_clamped_to_warmup_request_concurrency(
+    prefill: int, expected_prefill: int
+) -> None:
+    """The copied profiling prefill cap must fit under the warmup's tighter request cap."""
+    phase = _PHASE_ADAPTER.validate_python(
+        {
+            "name": "profiling",
+            "type": "concurrency",
+            "concurrency": 64,
+            "prefill_concurrency": prefill,
+            "request_concurrency": 32,
+            "agentic_warmup_request_concurrency": 8,
+            "duration": 900,
+            "timing_mode": TimingMode.AGENTIC_REPLAY,
+        }
+    )
+    warmup = _build_agentic_warmup_config(phase)
+    assert warmup is not None
+    assert warmup.prefill_concurrency == expected_prefill
+    assert warmup.request_concurrency == 8
 
 
 def test_warmup_config_total_expected_requests_set() -> None:

@@ -364,6 +364,23 @@ concurrency, duration, and arrival shape (`concurrency`, `constant`, `poisson`,
 semantics: warmup data remains available under that phase, while profiling
 phases contribute to profiling aggregates.
 
+## Request concurrency in phases
+
+A phase can set `request_concurrency`, the total in-flight cap across roots and sub-agent forks until each response returns. It is independent of `concurrency`, which caps sessions. When `prefill_concurrency` is also set (it requires `endpoint.streaming: true`), it must be ≤ `request_concurrency`.
+
+```yaml
+benchmark:
+  phases:
+    - name: profiling
+      type: concurrency
+      concurrency: 64
+      request_concurrency: 16   # at most 16 requests on the wire at once
+      prefill_concurrency: 8    # must be <= request_concurrency
+      requests: 500
+```
+
+See [Request Concurrency](../benchmark-modes/timing-modes-reference.md#request-concurrency) for how it differs from `--concurrency`. It has no ramp or adaptive control: the cap is fixed for the phase.
+
 ## Adaptive scale in YAML
 
 Adaptive scale is a YAML-only phase feature for single-run boundary discovery. Instead of launching a sweep or separate search trials, AIPerf runs a profiling phase, evaluates SLA windows, ramps up while every SLA filter passes, and then sustains near the discovered boundary.

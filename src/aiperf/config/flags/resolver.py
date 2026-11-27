@@ -237,6 +237,7 @@ def _resolve_config_envelopes(
         dataset_format=getattr(base_dataset, "format", None),
         phase_shape_decision=merged.phase_shape_decision,
         phase_identity=merged.phase_identity,
+        scenario_decision=merged.scenario_decision,
     )
 
     variant_runs = _build_variant_runs(
@@ -675,6 +676,23 @@ class _PhaseIdentityDecision:
 
 
 @dataclass(slots=True)
+class _ScenarioDecision:
+    """The scenario in force, resolved once on the rendered pass.
+
+    ``benchmark.scenario`` may be a ``{{ ... }}`` template in the retained
+    pre-Jinja envelope, where ``get_scenario`` would reject it. Replayed onto
+    that pass the same way as :class:`_PhaseIdentityDecision`.
+
+    Attributes:
+        decided: Whether ``scenario`` has been resolved.
+        scenario: Scenario name in force, or ``None`` when there is none.
+    """
+
+    decided: bool = False
+    scenario: str | None = None
+
+
+@dataclass(slots=True)
 class _MergedEnvelope:
     """One override pass' merged envelope plus the decision it reached.
 
@@ -689,6 +707,7 @@ class _MergedEnvelope:
     envelope: dict[str, Any]
     phase_shape_decision: _PhaseShapeDecision
     phase_identity: _PhaseIdentityDecision
+    scenario_decision: _ScenarioDecision
 
 
 def _merge_overrides_into_envelope(
@@ -700,6 +719,7 @@ def _merge_overrides_into_envelope(
     dataset_format: Any,
     phase_shape_decision: _PhaseShapeDecision | None = None,
     phase_identity: _PhaseIdentityDecision | None = None,
+    scenario_decision: _ScenarioDecision | None = None,
 ) -> _MergedEnvelope:
     """Apply the config-file CLI override pipeline to one envelope.
 
@@ -721,6 +741,11 @@ def _merge_overrides_into_envelope(
     envelope = normalize_gpu_telemetry_base_for_override(envelope, overrides)
     envelope = normalize_server_metrics_base_for_override(envelope, overrides)
     merged = deep_merge(envelope, overrides) if overrides else envelope
+    if scenario_decision is None:
+        scenario_decision = _ScenarioDecision()
+    if not scenario_decision.decided:
+        scenario_decision.scenario = _resolved_scenario(merged, cli_config)
+        scenario_decision.decided = True
     _apply_control_hook_enable_overrides(merged, cli_config)
     _replace_profiler_start_body(merged, overrides)
     _apply_dataset_overrides(
@@ -734,8 +759,14 @@ def _merge_overrides_into_envelope(
         cli_config,
         phase_shape_decision=phase_shape_decision,
         phase_identity=identity,
+        scenario_decision=scenario_decision,
     )
-    _apply_warmup_overrides(merged, cli_config, phase_identity=identity)
+    _apply_warmup_overrides(
+        merged,
+        cli_config,
+        phase_identity=identity,
+        scenario_decision=scenario_decision,
+    )
     _strip_recipe_consumed_magic_lists(merged, cli_config)
     promote_benchmark_magic_lists(
         merged,
@@ -746,7 +777,10 @@ def _merge_overrides_into_envelope(
     )
     _coalesce_phase_aliases(merged)
     return _MergedEnvelope(
-        envelope=merged, phase_shape_decision=decision, phase_identity=identity
+        envelope=merged,
+        phase_shape_decision=decision,
+        phase_identity=identity,
+        scenario_decision=scenario_decision,
     )
 
 
@@ -1605,6 +1639,7 @@ _LOADGEN_PHASE_FIELD_MAP: tuple[tuple[str, str], ...] = (
     ("benchmark_grace_period", "grace_period"),
     ("concurrency", "concurrency"),
     ("prefill_concurrency", "prefill_concurrency"),
+    ("request_concurrency", "request_concurrency"),
     ("request_rate", "rate"),
     ("user_centric_rate", "rate"),
     ("num_users", "users"),
@@ -1631,12 +1666,33 @@ _PROFILING_PHASE_OVERRIDE_FIELDS: frozenset[str] = frozenset(
 )
 
 
+def _resolved_scenario(
+    merged: dict[str, Any],
+    cli: CLIConfig,
+    scenario_decision: _ScenarioDecision | None = None,
+) -> str | None:
+    """The scenario in force: ``--scenario`` when given, else the config file's.
+
+    A ``benchmark.scenario`` written as a Jinja template is only a source string
+    on the pre-Jinja pass, so that pass replays the rendered pass' answer.
+    """
+    if scenario_decision is not None and scenario_decision.decided:
+        return scenario_decision.scenario
+    if "scenario" in cli.model_fields_set:
+        return cli.scenario
+    benchmark = merged.get("benchmark")
+    if isinstance(benchmark, dict):
+        return benchmark.get("scenario")
+    return None
+
+
 def _apply_phase_loadgen_overrides(
     merged: dict[str, Any],
     cli: CLIConfig,
     *,
     phase_shape_decision: _PhaseShapeDecision | None = None,
     phase_identity: _PhaseIdentityDecision | None = None,
+    scenario_decision: _ScenarioDecision | None = None,
 ) -> _PhaseShapeDecision:
     """Overlay explicit ``--request-count`` / ``--request-rate`` / etc. onto
     the YAML-supplied profiling phase.
@@ -1674,13 +1730,20 @@ def _apply_phase_loadgen_overrides(
     from aiperf.config.flags._converter_profiling import (
         _AGENTIC_REPLAY_ROUTES,
         _apply_agentic_replay_fields,
+        _apply_agentic_warmup_request_concurrency,
         _apply_continuation_dispatch,
+        scenario_is_agentic,
     )
 
     decision = phase_shape_decision or _PhaseShapeDecision()
     loadgen_set = cli.model_fields_set & _PROFILING_PHASE_OVERRIDE_FIELDS
     agentic_set = cli.model_fields_set.intersection(_AGENTIC_REPLAY_ROUTES)
-    if not loadgen_set and not agentic_set:
+    # Outside agentic replay, --warmup-request-concurrency targets the warmup
+    # phase only, so it must not force a unique-profiling-phase lookup.
+    warmup_cap_set = "warmup_request_concurrency" in cli.model_fields_set and (
+        scenario_is_agentic(_resolved_scenario(merged, cli, scenario_decision))
+    )
+    if not loadgen_set and not agentic_set and not warmup_cap_set:
         return decision
 
     benchmark = merged.get("benchmark")
@@ -1698,6 +1761,9 @@ def _apply_phase_loadgen_overrides(
     _apply_loadgen_value_overrides(target, cli, loadgen_set)
     _apply_default_grace_period_override(target, cli, loadgen_set)
     _apply_agentic_replay_fields(target, cli)
+    _apply_agentic_warmup_request_concurrency(
+        target, cli, _resolved_scenario(merged, cli, scenario_decision)
+    )
     decision = _apply_phase_shape_overrides(
         target, cli, loadgen_set, decision=phase_shape_decision
     )
@@ -2134,6 +2200,7 @@ def _apply_warmup_overrides(
     cli: CLIConfig,
     *,
     phase_identity: _PhaseIdentityDecision | None = None,
+    scenario_decision: _ScenarioDecision | None = None,
 ) -> None:
     """Overlay explicitly-set ``--warmup-*`` flags onto the warmup phase.
 
@@ -2170,6 +2237,12 @@ def _apply_warmup_overrides(
     existing = _find_warmup_phase(phases, phase_identity or _PhaseIdentityDecision())
     built = build_warmup(cli, base_warmup=existing is not None)
     if built is None:
+        from aiperf.config.flags._converter_profiling import scenario_is_agentic
+
+        if warmup_set <= {"warmup_request_concurrency"} and scenario_is_agentic(
+            _resolved_scenario(merged, cli, scenario_decision)
+        ):
+            return
         from aiperf.config.flags._config_flag_routing import flag_names_for
 
         names = sorted("/".join(flag_names_for(f) or (f,)) for f in warmup_set)
@@ -2184,11 +2257,38 @@ def _apply_warmup_overrides(
         phases.insert(0, {"name": "warmup", "kind": "warmup", **built})
         return
 
+    _drop_mirrored_prefill_for_yaml_warmup_cap(built, existing, cli, warmup_set)
     _drop_alias_spellings(existing, built)
     merged_warmup = deep_merge(existing, built)
     _reject_incompatible_warmup_transition(merged_warmup, warmup_set)
     existing.clear()
     existing.update(merged_warmup)
+
+
+def _drop_mirrored_prefill_for_yaml_warmup_cap(
+    built: dict[str, Any],
+    existing: dict[str, Any],
+    cli: CLIConfig,
+    warmup_set: frozenset[str] | set[str],
+) -> None:
+    """Keep a YAML warmup's own caps when --prefill-concurrency would mirror onto it.
+
+    Dropping the mirror when the YAML warmup declares a request cap is the same
+    decision in the raw and rendered passes, even when that cap is a Jinja
+    template. A ``--warmup-request-concurrency`` override keeps the mirror, which
+    ``build_warmup`` clamps. An explicit ``--warmup-prefill-concurrency`` is never
+    dropped; it fails validation instead.
+    """
+    if (
+        "warmup_prefill_concurrency" in warmup_set
+        or "prefill_concurrency" not in cli.model_fields_set
+        or built.get("request_concurrency") is not None
+    ):
+        return
+    if "request_concurrency" in existing or (
+        _snake_to_camel("request_concurrency") in existing
+    ):
+        built.pop("prefill_concurrency", None)
 
 
 def _reject_incompatible_warmup_transition(
