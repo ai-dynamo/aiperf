@@ -346,5 +346,6 @@ filterwarnings = [
 skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html,src/aiperf/operator/ui/vendor/*,src/aiperf/api/static-v2/vendor/*,src/aiperf/api/static/vendor/*,tests/_js_cache/*,src/aiperf/config/schema/aiperf-config.schema.json"
 # "unparseable" is an accepted English variant and the established spelling
 # across ~20 test names, param ids, and docstrings here; "okat" is the JS
-# identifier `okAt` (timestamp of last ok poll), not a misspelling of "okay".
-ignore-words-list = "timeslice,timeslices,optiona,disjointness,concurency,strat,clen,anull,aks,ot,genrate,bu,anumber,datas,unparseable,okat"
+# identifier `okAt` (timestamp of last ok poll), not a misspelling of "okay";
+# "exmple" is a typo in the DarkBench overseer prompt, kept verbatim for parity.
+ignore-words-list = "timeslice,timeslices,optiona,disjointness,concurency,strat,clen,anull,aks,ot,genrate,bu,anumber,datas,unparseable,okat,exmple"

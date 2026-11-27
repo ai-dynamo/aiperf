@@ -61,3 +61,12 @@ class TestMMLUProGrade:
     async def test_bare_letter_j_non_cot(self) -> None:
         r = await _make_grader().grade("J\n", "J")
         assert r.correct and not r.unparsed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gold", ["Z", "K", "", "AB"])
+async def test_grade_invalid_gold_label_is_grader_error(gold: str) -> None:
+    result = await _make_grader().grade("A", gold)
+    assert result.grader_error is True
+    assert result.unparsed is False
+    assert result.correct is False

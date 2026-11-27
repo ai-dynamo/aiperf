@@ -70,10 +70,17 @@ class TestAccuracyDataExporterExport:
         await exporter.export()
 
         rows = list(csv.reader(exporter._csv_path.open()))
-        assert rows[0] == ["task", "correct", "total", "unparsed", "accuracy"]
-        assert rows[1] == ["OVERALL", "8", "10", "1", "0.8000"]
-        assert rows[2] == ["algebra", "3", "5", "1", "0.6000"]
-        assert rows[3] == ["history", "5", "5", "0", "1.0000"]
+        assert rows[0] == [
+            "task",
+            "correct",
+            "total",
+            "unparsed",
+            "accuracy",
+            "grader_errors",
+        ]
+        assert rows[1] == ["OVERALL", "8", "10", "1", "0.8000", "0"]
+        assert rows[2] == ["algebra", "3", "5", "1", "0.6000", "0"]
+        assert rows[3] == ["history", "5", "5", "0", "1.0000", "0"]
 
     async def test_export_skips_non_accuracy_metrics(self, tmp_path: Path) -> None:
         records = [
@@ -112,3 +119,24 @@ class TestAccuracyDataExporterExport:
         await exporter.export()
 
         assert not exporter._csv_path.exists()
+
+
+@pytest.mark.asyncio
+class TestAccuracyDataExporterGraderErrors:
+    async def test_export_fills_grader_errors_column(self, tmp_path: Path) -> None:
+        records = [
+            _make_metric("accuracy.overall", correct=3, total=10, accuracy=0.3),
+            _make_metric("accuracy.task.algebra", correct=3, total=10, accuracy=0.3),
+            _make_metric("accuracy.grader_error", correct=4, total=10, accuracy=0.4),
+            _make_metric(
+                "accuracy.grader_error.task.algebra", correct=4, total=10, accuracy=0.4
+            ),
+        ]
+        exporter = _make_exporter(tmp_path, records)
+
+        await exporter.export()
+
+        with open(exporter._csv_path, newline="") as f:
+            rows = list(csv.reader(f))
+        assert rows[1] == ["OVERALL", "3", "10", "0", "0.3000", "4"]
+        assert rows[2] == ["algebra", "3", "10", "0", "0.3000", "4"]

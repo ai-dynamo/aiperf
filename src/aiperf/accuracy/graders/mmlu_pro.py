@@ -42,6 +42,16 @@ class MMLUProGrader(BaseGrader):
     ) -> GradingResult:
         pred, unparsed = self._extract(response_text)
         gold = ground_truth.strip()
+        if len(gold) != 1 or gold not in LETTERS:
+            # An out-of-range gold label is a dataset problem, not a model one.
+            return GradingResult(
+                correct=False,
+                grader_error=True,
+                confidence=0.0,
+                reasoning=f"mmlu_pro: invalid ground truth {gold!r}",
+                extracted_answer=pred,
+                ground_truth=gold,
+            )
         correct = pred == gold and pred != ""
         return GradingResult(
             correct=correct,
