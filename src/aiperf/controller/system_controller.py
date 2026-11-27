@@ -248,6 +248,7 @@ class SystemController(
         # worker from service_id_map, so a reaped worker is never mistaken for
         # one that failed before registering.
         self._registered_worker_ids: set[str] = set()
+        self._initial_workers_spawned = asyncio.Event()
         self._worker_start_watch_task: asyncio.Task | None = None
         self._export_failed = False
         self._failed_exporters: list[str] = []
@@ -591,6 +592,11 @@ class SystemController(
             await self.service_manager.wait_for_all_services_registration(
                 stop_event=self._stop_requested_event,
             )
+            if not self._is_kubernetes():
+                await asyncio.wait_for(
+                    self._initial_workers_spawned.wait(),
+                    timeout=Environment.SERVICE.START_TIMEOUT,
+                )
 
         # Services are silent while starting up, so staleness only becomes
         # meaningful once every one of them has registered.
@@ -599,7 +605,24 @@ class SystemController(
         self._raise_if_startup_aborted()
         await self._set_system_state(SystemState.CONFIGURING)
         self.info("AIPerf System is CONFIGURING")
-        await self._profile_configure_all_services()
+        configured_ids = await self._profile_configure_all_services()
+        if not self._is_kubernetes() and isinstance(
+            self.service_manager, LocalProcessServiceManagerProtocol
+        ):
+            # Spawned workers and record processors may still be registering
+            # during the first fan-out. Configure those it did not target
+            # before starting profiling.
+            await self.service_manager.wait_for_all_services_registration(
+                stop_event=self._stop_requested_event,
+            )
+            late_ids = set(self._live_service_ids()) - configured_ids
+            if late_ids:
+                responses = await self._send_control_command_to_all_fail_fast(
+                    CommandType.PROFILE_CONFIGURE,
+                    sorted(late_ids),
+                    timeout=Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT,
+                )
+                self._parse_responses_for_errors(responses, "Configure Profiling")
         self._raise_if_startup_aborted()
         await self._set_system_state(SystemState.READY)
         self.info("AIPerf System is CONFIGURED")
@@ -775,7 +798,7 @@ class SystemController(
             SystemStateChangedMessage(service_id=self.service_id, state=state)
         )
 
-    async def _profile_configure_all_services(self) -> None:
+    async def _profile_configure_all_services(self) -> set[str]:
         """Configure all services to start profiling.
 
         This is a blocking call that will wait for all services to be configured
@@ -784,19 +807,20 @@ class SystemController(
         """
         self.info("Configuring all services to start profiling")
         begin = time.perf_counter()
+        service_ids = self._live_service_ids()
         responses = await self._send_control_command_to_all_fail_fast(
             CommandType.PROFILE_CONFIGURE,
-            self._live_service_ids(),
+            service_ids,
             timeout=Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT,
         )
         duration = time.perf_counter() - begin
         self._parse_responses_for_errors(responses, "Configure Profiling")
         self.info(f"All services configured in {duration:.2f} seconds")
-
         if not Environment.HTTP.SSL_VERIFY:
             self.warning(
                 "SSL certificate verification is DISABLED - this is insecure. This should only be used for testing in a trusted environment."
             )
+        return set(service_ids)
 
     async def _start_profiling_all_services(self) -> None:
         """Tell all services to start profiling.
@@ -1306,6 +1330,7 @@ class SystemController(
                 ServiceType.RECORD_PROCESSOR,
                 max(1, num_workers // Environment.RECORD.PROCESSOR_SCALE_FACTOR),
             )
+        self._initial_workers_spawned.set()
 
     @on_command(CommandType.GET_POD_STATES)
     async def _handle_get_pod_states_command(

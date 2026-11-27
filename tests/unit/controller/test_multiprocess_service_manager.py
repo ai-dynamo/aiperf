@@ -338,6 +338,39 @@ class TestMultiProcessServiceManager:
             )
 
     @pytest.mark.asyncio
+    async def test_reaped_worker_registration_does_not_count_for_live_worker(
+        self,
+        service_manager: MultiProcessServiceManager,
+        mock_alive_process: MagicMock,
+        mock_dead_process: MagicMock,
+    ) -> None:
+        from aiperf.common.enums import ServiceRegistrationStatus
+        from aiperf.common.models.service_models import ServiceRunInfo
+
+        service_manager.multi_process_info = [
+            MultiProcessRunInfo.model_construct(
+                process=mock_dead_process,
+                service_type=ServiceType.WORKER,
+                service_id="dead_worker",
+            ),
+            MultiProcessRunInfo.model_construct(
+                process=mock_alive_process,
+                service_type=ServiceType.WORKER,
+                service_id="live_worker",
+            ),
+        ]
+        service_manager.service_id_map["dead_worker"] = ServiceRunInfo(
+            service_type=ServiceType.WORKER,
+            registration_status=ServiceRegistrationStatus.REGISTERED,
+            service_id="dead_worker",
+        )
+
+        with pytest.raises(AIPerfError, match="failed to register within timeout"):
+            await service_manager.wait_for_all_services_registration(
+                stop_event=asyncio.Event(), timeout_seconds=0.1
+            )
+
+    @pytest.mark.asyncio
     async def test_stop_event_cancels_registration_wait(
         self, service_manager: MultiProcessServiceManager, mock_alive_process: MagicMock
     ):

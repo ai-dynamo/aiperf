@@ -249,22 +249,35 @@ class MultiProcessServiceManager(BaseServiceManager):
 
         # TODO: Can this be done better by using asyncio.Event()?
 
-        async def _wait_for_registration():
-            while not stop_event.is_set():
-                registered_counts = Counter(
+        def registered_counts() -> Counter[ServiceTypeT]:
+            if not self.multi_process_info and not self._reaped_exit_codes:
+                return Counter(
                     service_info.service_type
                     for service_info in self.service_id_map.values()
                     if service_info.registration_status
                     == ServiceRegistrationStatus.REGISTERED
                 )
+            return Counter(
+                info.service_type
+                for info in self.multi_process_info
+                if info.process is not None
+                and info.process.is_alive()
+                and (service_info := self.service_id_map.get(info.service_id))
+                is not None
+                and service_info.registration_status
+                == ServiceRegistrationStatus.REGISTERED
+            )
+
+        async def _wait_for_registration():
+            while not stop_event.is_set():
+                self._reap_dead_processes_during_registration(required_counts)
+                current_counts = registered_counts()
 
                 if all(
-                    registered_counts[service_type] >= count
+                    current_counts[service_type] >= count
                     for service_type, count in required_counts.items()
                 ):
                     return
-
-                self._reap_dead_processes_during_registration(required_counts)
 
                 # Wait a bit before checking again
                 await asyncio.sleep(0.5)
@@ -272,15 +285,10 @@ class MultiProcessServiceManager(BaseServiceManager):
         try:
             await asyncio.wait_for(_wait_for_registration(), timeout=timeout_seconds)
         except TimeoutError as e:
-            registered_counts = Counter(
-                service_info.service_type
-                for service_info in self.service_id_map.values()
-                if service_info.registration_status
-                == ServiceRegistrationStatus.REGISTERED
-            )
+            current_counts = registered_counts()
 
             for service_type, count in required_counts.items():
-                registered = registered_counts[service_type]
+                registered = current_counts[service_type]
                 if registered < count:
                     self.error(
                         f"Service {service_type} failed to fully register within "
