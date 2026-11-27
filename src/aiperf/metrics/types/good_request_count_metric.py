@@ -75,11 +75,19 @@ class GoodRequestCountMetric(BaseAggregateCounterMetric):
             return 0
         return 1 if self._is_good(record_metrics) else 0
 
-    def _passes(self, metric_cls, record_value: float, threshold_value: float) -> bool:
-        """Compare a record value against its SLO using the metric's directionality."""
+    def _passes(
+        self,
+        metric_cls,
+        record_value: float | list[int] | list[float],
+        threshold: float,
+    ) -> bool:
+        """Require every observation in the record to satisfy the SLO."""
+        values = record_value if isinstance(record_value, list) else (record_value,)
+        if not values:
+            return False
         if metric_cls.flags.has_flags(MetricFlags.LARGER_IS_BETTER):
-            return record_value >= threshold_value
-        return record_value <= threshold_value
+            return all(value >= threshold for value in values)
+        return all(value <= threshold for value in values)
 
     def _is_good(self, record_metrics: MetricRecordDict) -> bool:
         """Check if the record satisfies all configured SLOs."""
