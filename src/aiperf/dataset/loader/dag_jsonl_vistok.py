@@ -13,6 +13,7 @@ many merged tokens. Video counts assume every frame reaches the vision encoder
 
 import math
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Literal
 
 VisionModel = Literal["qwen3_vl", "qwen2_5_vl"]
@@ -106,6 +107,7 @@ def visual_tokens(
     return grid_t * (h // spec.factor) * (w // spec.factor)
 
 
+@lru_cache(maxsize=1024)
 def resolve_dimensions(
     kind: Literal["image", "video"],
     vis_tokens: int,

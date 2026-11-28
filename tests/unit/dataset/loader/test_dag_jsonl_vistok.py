@@ -128,3 +128,12 @@ def test_smart_resize_matches_transformers(
         )
         == expected
     )
+
+
+def test_resolve_dimensions_memoizes_preimage_scan() -> None:
+    resolve_dimensions.cache_clear()
+    first = resolve_dimensions("video", 16302, num_frames=3, model="qwen3_vl")
+    second = resolve_dimensions("video", 16302, num_frames=3, model="qwen3_vl")
+    info = resolve_dimensions.cache_info()
+    assert first == second == (4000, 1600)
+    assert info.misses == 1 and info.hits == 1
