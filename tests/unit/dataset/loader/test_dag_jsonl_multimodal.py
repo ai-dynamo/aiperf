@@ -45,6 +45,8 @@ VID = {
     "fps": 0.5,
     "num_frames": 3,
 }
+IMG_VT = {"media_hash": "vt_img", "kind": "image", "vis_tokens": 576}
+VID_VT = {"media_hash": "vt_vid", "kind": "video", "vis_tokens": 1920, "num_frames": 16}
 
 # Stand-in ffmpeg: "encodes" by counting streamed RGB bytes into a tiny text
 # file, "decodes" that file back into a YUV4MPEG2 stream, and floods stderr on
@@ -126,12 +128,41 @@ class TestModels:
         with pytest.raises(ValidationError, match="not a boolean"):
             DagMediaSegment.model_validate({**IMG, "width": True})
 
-    @pytest.mark.parametrize(
-        "field", [param("vis_tokens", id="vis_tokens"), param("framing_tokens", id="framing")]
-    )  # fmt: skip
-    def test_dropped_token_budget_fields_rejected(self, field: str) -> None:
+    def test_dropped_framing_tokens_field_rejected(self) -> None:
         with pytest.raises(ValidationError, match="Extra inputs"):
-            DagMediaSegment.model_validate({**IMG, field: 5})
+            DagMediaSegment.model_validate({**IMG, "framing_tokens": 5})
+
+    @pytest.mark.parametrize(
+        "segment, expected",
+        [
+            param(IMG_VT, (1024, 576), id="qwen3-image"),
+            param(VID_VT, (640, 384), id="qwen3-video"),
+            param({**VID_VT, "vision_model": "qwen2_5_vl"}, (560, 336), id="qwen25-video"),
+            param({**IMG_VT, "width": 1024, "height": 576}, (1024, 576), id="consistent-explicit"),
+        ],
+    )  # fmt: skip
+    def test_vis_tokens_resolve_geometry(
+        self, segment: dict, expected: tuple[int, int]
+    ) -> None:
+        seg = DagMediaSegment.model_validate(segment)
+        assert (seg.width, seg.height) == expected
+
+    @pytest.mark.parametrize(
+        "segment, match",
+        [
+            param({"media_hash": "x", "kind": "image"}, "requires width and height", id="no-geometry"),
+            param({**IMG, "height": None}, "requires width and height", id="width-only"),
+            param({**IMG_VT, "width": 1024}, "both width and height or neither", id="vt-width-only"),
+            param({**IMG, "vision_model": "qwen2_5_vl"}, "without vis_tokens", id="model-only"),
+            param({**IMG_VT, "width": 1280, "height": 720}, "encodes to 880", id="mismatch"),
+            param({**IMG_VT, "vis_tokens": 577}, "unreachable", id="unreachable"),
+            param({**VID_VT, "vis_tokens": 1921}, "not divisible by grid_t=8", id="grid-t"),
+            param({**IMG_VT, "vis_tokens": True}, "not a boolean", id="bool"),
+        ],
+    )  # fmt: skip
+    def test_vis_tokens_validation_rejects(self, segment: dict, match: str) -> None:
+        with pytest.raises(ValidationError, match=match):
+            DagMediaSegment.model_validate(segment)
 
     def test_span_tokens_required_for_text_and_informational_for_media(self) -> None:
         with pytest.raises(ValidationError, match="requires 'tokens'"):
@@ -344,6 +375,17 @@ class TestFfmpegPipeline:
         assert first == encode_deterministic_mp4(seg, ffmpeg_bin=ff)
         assert first[4:8] == b"ftyp"
 
+    @pytest.mark.ffmpeg
+    @pytest.mark.parametrize("model", ["qwen3_vl", "qwen2_5_vl"])
+    def test_real_ffmpeg_encodes_vis_tokens_geometry(self, model: str) -> None:
+        ff = find_ffmpeg_binary()
+        if ff is None:
+            pytest.skip("ffmpeg binary not installed")
+        seg = DagMediaSegment.model_validate(
+            {**VID_VT, "vis_tokens": 24, "num_frames": 2, "vision_model": model}
+        )
+        assert encode_deterministic_mp4(seg, ffmpeg_bin=ff)[4:8] == b"ftyp"
+
 
 class TestLoader:
     def test_shared_media_is_encoded_once_and_identical_across_branches(
@@ -403,6 +445,39 @@ class TestLoader:
         )
         assert eval_parts[2]["uuid"] == "author-uuid"
         assert eval_parts[2]["image_url"] == img_part["image_url"]
+
+    def test_vis_tokens_segments_dedupe_across_turns_and_forks(
+        self, tmp_path: Path, fake_ffmpeg
+    ) -> None:
+        script, calls = fake_ffmpeg
+        vid = {**VID_VT, "vis_tokens": 24, "num_frames": 2}
+        explicit_img = {**IMG_VT, "width": 1024, "height": 576}
+        rows = [
+            {"session_id": "root", "turns": [
+                {"media_segments": [IMG_VT, vid], "in_text_tokens": 3},
+                {"media_segments": [explicit_img], "in_text_tokens": 2, "forks": ["critic"]},
+            ]},
+            {"session_id": "critic", "turns": [{"media_segments": [IMG_VT, vid], "in_text_tokens": 2}]},
+        ]  # fmt: skip
+        loader = DagJsonlLoader(_write_dag(tmp_path, rows), tokenizer=_Tokenizer())
+        with patch.object(dag_jsonl_media, "find_ffmpeg_binary", return_value=script):
+            convs = {c.session_id: c for c in loader.load()}
+
+        assert sum("-c:v" in c for c in calls) == 1
+        root0, root1 = (t.raw_messages[0]["content"] for t in convs["root"].turns)
+        assert convs["critic"].turns[0].raw_messages[0]["content"][1:] == root0[1:]
+        assert root1[1] == root0[1]
+        png = base64.b64decode(root0[1]["image_url"]["url"].split(",", 1)[1])
+        assert PILImage.open(io.BytesIO(png)).size == (1024, 576)
+        mp4 = base64.b64decode(root0[2]["video_url"]["url"].split(",", 1)[1])
+        assert mp4.split()[:3] == [b"192", b"128", b"2"]
+
+    def test_unreachable_vis_tokens_raise_dag_load_error(self, tmp_path: Path) -> None:
+        rows = [{"session_id": "s", "turns": [{"media_segments": [{**IMG_VT, "vis_tokens": 577}]}]}]  # fmt: skip
+        with pytest.raises(
+            DagLoadError, match="vis_tokens=577 is unreachable for qwen3_vl"
+        ):
+            DagJsonlLoader(_write_dag(tmp_path, rows)).load()
 
     def test_uuids_omitted_without_emit_media_uuid(self, tmp_path: Path) -> None:
         rows = [{"session_id": "s", "turns": [{"media_segments": [IMG]}]}]
