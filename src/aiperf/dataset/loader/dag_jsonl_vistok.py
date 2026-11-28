@@ -134,7 +134,7 @@ def resolve_dimensions(
         )
 
     exact = [(w, h) for w, h in candidates if encodes(w, h)]
-    if candidates and not exact:
+    if not exact:
         # smart_resize clamped every unresized grid; search its input preimages.
         sides = range(spec.factor, max_side * spec.factor + 1, spec.factor)
         exact = [(w, h) for w in sides for h in sides if encodes(w, h)]
