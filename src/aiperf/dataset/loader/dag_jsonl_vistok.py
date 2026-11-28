@@ -127,15 +127,24 @@ def resolve_dimensions(
         for cols in range(1, max_side + 1)
         if per_frame % cols == 0 and per_frame // cols <= max_side
     ]
-    exact = [
-        (w, h)
-        for w, h in candidates
-        if visual_tokens(kind, w, h, num_frames=num_frames, model=model) == vis_tokens
-    ]
+
+    def encodes(w: int, h: int) -> bool:
+        return (
+            visual_tokens(kind, w, h, num_frames=num_frames, model=model) == vis_tokens
+        )
+
+    exact = [(w, h) for w, h in candidates if encodes(w, h)]
+    if candidates and not exact:
+        # smart_resize clamped every unresized grid; search its input preimages.
+        sides = range(spec.factor, max_side * spec.factor + 1, spec.factor)
+        exact = [(w, h) for w in sides for h in sides if encodes(w, h)]
     if not exact:
         raise ValueError(
             f"{kind} vis_tokens={vis_tokens} is unreachable for {model}: no width x "
             f"height (multiples of {spec.factor}, each <= {MAX_RESOLVED_SIDE}) within "
             f"the processor pixel budget encodes to exactly {vis_tokens} tokens"
         )
-    return min(exact, key=lambda wh: (abs(math.log(wh[0] / wh[1] * 9 / 16)), -wh[0]))
+    return min(
+        exact,
+        key=lambda wh: (abs(math.log(wh[0] / wh[1] * 9 / 16)), wh[0] * wh[1], -wh[0]),
+    )

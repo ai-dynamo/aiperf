@@ -1,8 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import random
-
 import pytest
 from pytest import param
 
@@ -53,6 +51,7 @@ def test_visual_tokens_match_hf_processors(
         param("qwen3_vl", "image", 1369, 1, (1184, 1184), id="qwen3-image-square"),
         param("qwen3_vl", "video", 1920, 16, (640, 384), id="qwen3-video"),
         param("qwen3_vl", "video", 768, 3, (768, 512), id="qwen3-video-padded-frame"),
+        param("qwen3_vl", "video", 16120, 3, (3552, 1888), id="qwen3-video-clamped-preimage"),
         param("qwen2_5_vl", "image", 576, 1, (896, 504), id="qwen25-image"),
         param("qwen2_5_vl", "video", 960, 16, (420, 224), id="qwen25-video"),
     ],
@@ -94,25 +93,37 @@ def test_resolve_dimensions_rejects_impossible_counts(
         resolve_dimensions(kind, vis_tokens, num_frames=frames, model=model)
 
 
-def test_smart_resize_matches_transformers() -> None:
-    pytest.importorskip("torchvision")
-    from transformers.models.qwen2_vl.image_processing_qwen2_vl import (
-        smart_resize as hf_image,
-    )
-    from transformers.models.qwen3_vl.video_processing_qwen3_vl import (
-        smart_resize as hf_video,
-    )
+# Outputs of transformers 5.17.0 qwen2_vl image / qwen3_vl video ``smart_resize``.
+SMART_RESIZE_HF_GOLDEN = [
+    param("qwen3_vl", 576, 1024, None, (576, 1024), id="q3-img-16x9"),
+    param("qwen3_vl", 50, 50, None, (256, 256), id="q3-img-min-clamp"),
+    param("qwen3_vl", 6000, 8000, None, (3520, 4704), id="q3-img-max-clamp"),
+    param("qwen3_vl", 777, 333, None, (768, 320), id="q3-img-portrait"),
+    param("qwen3_vl", 40, 8000, None, (32, 8000), id="q3-img-aspect-200"),
+    param("qwen2_5_vl", 576, 1024, None, (588, 1036), id="q25-img-16x9"),
+    param("qwen2_5_vl", 30, 30, None, (56, 56), id="q25-img-min-clamp"),
+    param("qwen2_5_vl", 3000, 4000, None, (2996, 4004), id="q25-img-max-clamp"),
+    param("qwen2_5_vl", 42, 70, None, (56, 56), id="q25-img-round-half"),
+    param("qwen3_vl", 384, 640, 16, (384, 640), id="q3-vid-16x9"),
+    param("qwen3_vl", 2176, 4096, 3, (2080, 3968), id="q3-vid-max-clamp"),
+    param("qwen3_vl", 1080, 1920, 128, (320, 576), id="q3-vid-many-frames"),
+    param("qwen3_vl", 16, 32, 2, (32, 64), id="q3-vid-below-factor"),
+    param("qwen3_vl", 60, 98, 3, (64, 96), id="q3-vid-min-clamp"),
+    param("qwen3_vl", 720, 1280, 5, (704, 1280), id="q3-vid-odd-frames"),
+]  # fmt: skip
 
-    rng = random.Random(0)
-    for _ in range(3000):
-        h, w, frames = rng.randint(2, 9000), rng.randint(2, 9000), rng.randint(2, 300)
-        if max(h, w) / min(h, w) > 200:
-            continue
-        for spec in VISION_SPECS.values():
-            lo, hi = spec.image_pixels
-            assert smart_resize(h, w, factor=spec.factor, pixels=(lo, hi)) == hf_image(
-                h, w, factor=spec.factor, min_pixels=lo, max_pixels=hi
-            )
-        lo, hi = VISION_SPECS["qwen3_vl"].video_pixels
-        ours = smart_resize(h, w, factor=32, pixels=(lo, hi), num_frames=frames)
-        assert ours == hf_video(frames, h, w, 2, 32, lo, hi)
+
+@pytest.mark.parametrize(
+    "model, height, width, frames, expected", SMART_RESIZE_HF_GOLDEN
+)
+def test_smart_resize_matches_transformers(
+    model: str, height: int, width: int, frames: int | None, expected: tuple[int, int]
+) -> None:
+    spec = VISION_SPECS[model]
+    pixels = spec.image_pixels if frames is None else spec.video_pixels
+    assert (
+        smart_resize(
+            height, width, factor=spec.factor, pixels=pixels, num_frames=frames
+        )
+        == expected
+    )
