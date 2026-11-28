@@ -123,23 +123,14 @@ def resolve_dimensions(
             f"{kind} vis_tokens={vis_tokens} is not divisible by grid_t={grid_t} "
             f"(ceil(num_frames={num_frames} / {spec.temporal_patch_size}))"
         )
-    per_frame, max_side = vis_tokens // grid_t, MAX_RESOLVED_SIDE // spec.factor
-    candidates = [
-        (cols * spec.factor, per_frame // cols * spec.factor)
-        for cols in range(1, max_side + 1)
-        if per_frame % cols == 0 and per_frame // cols <= max_side
+    max_side = MAX_RESOLVED_SIDE // spec.factor
+    sides = range(spec.factor, max_side * spec.factor + 1, spec.factor)
+    exact = [
+        (w, h)
+        for w in sides
+        for h in sides
+        if visual_tokens(kind, w, h, num_frames=num_frames, model=model) == vis_tokens
     ]
-
-    def encodes(w: int, h: int) -> bool:
-        return (
-            visual_tokens(kind, w, h, num_frames=num_frames, model=model) == vis_tokens
-        )
-
-    exact = [(w, h) for w, h in candidates if encodes(w, h)]
-    if not exact:
-        # smart_resize clamped every unresized grid; search its input preimages.
-        sides = range(spec.factor, max_side * spec.factor + 1, spec.factor)
-        exact = [(w, h) for w in sides for h in sides if encodes(w, h)]
     if not exact:
         raise ValueError(
             f"{kind} vis_tokens={vis_tokens} is unreachable for {model}: no width x "

@@ -53,6 +53,7 @@ def test_visual_tokens_match_hf_processors(
         param("qwen3_vl", "video", 768, 3, (768, 512), id="qwen3-video-padded-frame"),
         param("qwen3_vl", "video", 16120, 3, (3552, 1888), id="qwen3-video-clamped-preimage"),
         param("qwen3_vl", "video", 16302, 3, (4000, 1600), id="qwen3-video-upscaled-grid-preimage"),
+        param("qwen3_vl", "video", 13680, 7, (3296, 1952), id="qwen3-video-nearest-16x9-preimage"),
         param("qwen2_5_vl", "image", 576, 1, (896, 504), id="qwen25-image"),
         param("qwen2_5_vl", "video", 960, 16, (420, 224), id="qwen25-video"),
     ],
