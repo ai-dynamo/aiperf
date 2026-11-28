@@ -27,6 +27,11 @@ from pydantic import ConfigDict, Field, ValidationInfo, field_validator, model_v
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.finite import FiniteFloat
 from aiperf.common.models import AIPerfBaseModel
+from aiperf.dataset.loader.dag_jsonl_vistok import (
+    VisionModel,
+    resolve_dimensions,
+    visual_tokens,
+)
 from aiperf.dataset.loader.models import validate_chat_messages
 
 
@@ -49,15 +54,32 @@ class DagMediaSegment(AIPerfBaseModel):
     kind: Literal["image", "video"] = Field(
         description="Modality of this synthetic media segment ('image' or 'video').",
     )
-    width: int = Field(
+    width: int | None = Field(
+        default=None,
         ge=2,
         le=16384,
-        description="Media width in pixels (must be even for video).",
+        description="Media width in pixels (must be even for video). Derived from "
+        "``vis_tokens`` when width and height are both omitted.",
     )
-    height: int = Field(
+    height: int | None = Field(
+        default=None,
         ge=2,
         le=16384,
-        description="Media height in pixels (must be even for video).",
+        description="Media height in pixels (must be even for video). Derived from "
+        "``vis_tokens`` when width and height are both omitted.",
+    )
+    vis_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        le=1_048_576,
+        description="Merged visual-token count the segment must encode to under "
+        "``vision_model``. Sets width/height when they are omitted; otherwise "
+        "they must encode to exactly this count.",
+    )
+    vision_model: VisionModel = Field(
+        default="qwen3_vl",
+        description="HF processor whose resize rules map ``vis_tokens`` to "
+        "geometry. Video counts assume every frame reaches the vision encoder.",
     )
     fps: FiniteFloat = Field(
         default=24.0,
@@ -80,7 +102,9 @@ class DagMediaSegment(AIPerfBaseModel):
         "segment identity is sent instead.",
     )
 
-    @field_validator("width", "height", "fps", "num_frames", mode="before")
+    @field_validator(
+        "width", "height", "vis_tokens", "fps", "num_frames", mode="before"
+    )
     @classmethod
     def _reject_bool_numeric_fields(cls, v: Any, info: ValidationInfo) -> Any:
         if isinstance(v, bool):
@@ -96,6 +120,7 @@ class DagMediaSegment(AIPerfBaseModel):
                 f"image segment '{self.media_hash}' must have num_frames=1 "
                 f"(got {self.num_frames})"
             )
+        self._resolve_vis_tokens()
         if self.kind == "video":
             if self.width % 2 != 0 or self.height % 2 != 0:
                 raise ValueError(
@@ -108,6 +133,40 @@ class DagMediaSegment(AIPerfBaseModel):
                     f"(got {self.fps})"
                 )
         return self
+
+    def _resolve_vis_tokens(self) -> None:
+        name = f"{self.kind} segment '{self.media_hash}'"
+        if self.vis_tokens is None:
+            if self.width is None or self.height is None:
+                raise ValueError(f"{name} requires width and height, or vis_tokens")
+            if "vision_model" in self.model_fields_set:
+                raise ValueError(f"{name} sets vision_model without vis_tokens")
+            return
+        if self.width is None and self.height is None:
+            self.width, self.height = resolve_dimensions(
+                self.kind,
+                self.vis_tokens,
+                num_frames=self.num_frames,
+                model=self.vision_model,
+            )
+            return
+        if self.width is None or self.height is None:
+            raise ValueError(
+                f"{name} with vis_tokens needs both width and height or neither"
+            )
+        got = visual_tokens(
+            self.kind,
+            self.width,
+            self.height,
+            num_frames=self.num_frames,
+            model=self.vision_model,
+        )
+        if got != self.vis_tokens:
+            raise ValueError(
+                f"{name} {self.width}x{self.height} encodes to {got} visual tokens "
+                f"under {self.vision_model}, not vis_tokens={self.vis_tokens}; omit "
+                f"width and height to derive them from vis_tokens"
+            )
 
     @property
     def cache_key(self) -> tuple[str, str, int, int, float, int]:
